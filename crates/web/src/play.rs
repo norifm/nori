@@ -174,8 +174,8 @@ pub struct Live {
     open: RefCell<Option<Opened>>,
     /// The page is out of sight.
     hidden: Cell<bool>,
-    /// The lyrics shown: the song's id, the pick and its clock.
-    lyrics: RefCell<Option<(String, LyricsPick, LyricClock)>>,
+    /// The lyrics shown: the song, the pick and its clock.
+    lyrics: RefCell<Option<(nori_core::ItemKey, LyricsPick, LyricClock)>>,
 }
 
 impl Live {
@@ -235,13 +235,13 @@ impl Nori {
         let (song, state) = match now {
             LyricsNow::Shown { song, pick } => {
                 let at = self.position_now();
-                self.live.tell.say(&json!({ "kind": "lyrics", "song": song, "state": "shown", "lyrics": pick.lyrics, "origin": format!("{:?}", pick.origin), "timing": timing(pick.lyrics.timing) }));
+                self.live.tell.say(&json!({ "kind": "lyrics", "song": song.text(), "state": "shown", "lyrics": pick.lyrics, "origin": format!("{:?}", pick.origin), "timing": timing(pick.lyrics.timing) }));
                 let clock = clock_on(&pick.lyrics, at);
                 *self.live.lyrics.borrow_mut() = Some((song, pick, clock));
                 return;
             }
-            LyricsNow::Looking { song } => (Some(song), "looking"),
-            LyricsNow::Failed { song } => (Some(song), "failed"),
+            LyricsNow::Looking { song } => (Some(song.text().into_owned()), "looking"),
+            LyricsNow::Failed { song } => (Some(song.text().into_owned()), "failed"),
             LyricsNow::NoSong => (None, "none"),
         };
         *self.live.lyrics.borrow_mut() = None;
@@ -288,7 +288,7 @@ impl Nori {
     /// Stars song `id` through the device playing elsewhere while its queue has it, as the desktop does:
     /// that device tells the server and shows it at once. False when it is starred from here.
     pub(crate) fn star_there(&self, id: &str, on: bool) -> bool {
-        self.with(|h| h.elsewhere().is_some_and(|e| e.star(id, on))).unwrap_or(false)
+        self.with(|h| h.elsewhere().is_some_and(|e| e.star(&nori_core::ItemKey::own(id), on))).unwrap_or(false)
     }
 
     pub(crate) fn with<R>(&self, f: impl FnOnce(&Session) -> R) -> Option<R> {
@@ -397,9 +397,9 @@ impl Nori {
     }
 
     /// Plays album, playlist or artist (`kind`) `id` whole, shuffled with `shuffle`: the songs played (0: none).
-    pub async fn play_whole(&self, kind: String, id: String, shuffle: bool) -> Result<usize, JsValue> {
+    pub async fn play_whole(&self, kind: String, id: String, shuffle: bool, source: Option<String>, mixed: Option<bool>) -> Result<usize, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let what = whole(&kind, id)?;
+        let what = whole(&kind, id, source, mixed.unwrap_or(false))?;
         let from = what.origin();
         let songs = what.songs(&client).await.map_err(error)?;
         let n = songs.len();
@@ -411,9 +411,9 @@ impl Nori {
 
     /// Adds album, playlist or artist (`kind`) `id` whole to the queue, after the song playing with `next`:
     /// the songs added (0: none).
-    pub async fn queue_whole(&self, kind: String, id: String, next: bool) -> Result<usize, JsValue> {
+    pub async fn queue_whole(&self, kind: String, id: String, next: bool, source: Option<String>, mixed: Option<bool>) -> Result<usize, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let songs = whole(&kind, id)?.songs(&client).await.map_err(error)?;
+        let songs = whole(&kind, id, source, mixed.unwrap_or(false))?.songs(&client).await.map_err(error)?;
         let n = songs.len();
         if n > 0 {
             self.with(|h| h.enqueue(songs, next));
@@ -436,7 +436,7 @@ impl Nori {
     /// The worker before this one crashed `ms` into `song`, playing or not: the session goes on from there
     /// (`Session::carry_on`).
     pub fn carry_on(&self, song: String, ms: f64, playing: bool) {
-        self.with(|h| h.carry_on(&song, ms as i64, playing));
+        self.with(|h| h.carry_on(&nori_core::ItemKey::from_text(&song), ms as i64, playing));
     }
 
     /// Plays the queue's song at `index`.
@@ -450,9 +450,9 @@ impl Nori {
         nori_core::undo::UNDO_MS as f64
     }
 
-    /// Puts back song `id`, just taken out, where it was.
+    /// Puts back song `id` (its key's text), just taken out, where it was.
     pub fn put_back(&self, id: String) {
-        self.with(|h| h.put_back(&id));
+        self.with(|h| h.put_back(&nori_core::ItemKey::from_text(&id)));
     }
 
     /// Takes the songs after the one heard out; answers how long their undo is offered, ms
@@ -504,7 +504,7 @@ impl Nori {
 
     /// `song` is the one the player shows; what its lyrics view shows comes as `lyrics` reports.
     pub fn lyrics_heard(&self, song: Option<String>) {
-        if let Some(now) = self.with(|h| h.lyrics_heard(song)) {
+        if let Some(now) = self.with(|h| h.lyrics_heard(song.as_deref().map(nori_core::ItemKey::from_text))) {
             self.show_lyrics(now);
         }
     }
@@ -524,7 +524,7 @@ impl Nori {
         let sweep = self.app.settings.in_effect(|p| p.lyrics_sweep);
         let step = clock.advance(self.position_now(), sweep, true, true);
         let wait = clock.wait_ms(&step, sweep, frame_ms as u64).unwrap_or(0);
-        json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "swept": sweep && swept(pick, step.frame.active), "sung": step.frame.sung, "backing": clock.backing_sung(), "wait": wait }).to_string()
+        json!({ "song": song.text(), "active": step.frame.active, "glide": step.frame.glide_ms, "swept": sweep && swept(pick, step.frame.active), "sung": step.frame.sung, "backing": clock.backing_sung(), "wait": wait }).to_string()
     }
 
     /// A tap on lyric line `line`: shows it at once and plays from where it is sung, the lyrics' timing
@@ -587,7 +587,7 @@ impl Nori {
                 "state": format!("{:?}", n.state),
                 "playing": n.playing,
                 "index": n.index,
-                "id": n.song.as_ref().map(|s| s.id.clone()),
+                "id": n.song.as_ref().map(|s| nori_core::Keyed::key(s).text().into_owned()),
                 "positionMs": n.position_now(),
                 "fadingMs": n.fading_ms(),
                 "pace": n.pace,
@@ -607,7 +607,7 @@ impl Nori {
                 "system": h.playback().shown_to_system(),
                 "asks": h.rules().asks,
                 "underruns": status.as_ref().map_or(0, |s| s.underruns),
-                "transition": status.as_ref().and_then(|s| s.id.as_deref()).and_then(|id| h.core.session.planner.transition_note(id)).map(|t| json!({ "kind": format!("{:?}", t.kind), "into": t.incoming_id, "reason": t.reason })),
+                "transition": status.as_ref().and_then(|s| s.id.as_ref()).and_then(|id| h.core.session.planner.transition_note(id)).map(|t| json!({ "kind": format!("{:?}", t.kind), "into": t.incoming_id.text(), "reason": t.reason })),
             })
             .to_string()
         })
@@ -905,12 +905,12 @@ fn note(n: &Note) -> Value {
     }
 }
 
-/// The songs of an album, playlist or artist, as the page names its kind.
-fn whole(kind: &str, id: String) -> Result<nori_host::Fetch, JsValue> {
+/// The songs of an album, playlist or artist of `source` (None: the profile's own), as the page names its kind.
+fn whole(kind: &str, id: String, source: Option<String>, mixed: bool) -> Result<nori_host::Fetch, JsValue> {
     match kind {
-        "album" => Ok(nori_host::Fetch::Album(id)),
-        "playlist" => Ok(nori_host::Fetch::Playlist(id)),
-        "artist" => Ok(nori_host::Fetch::Artist(id)),
+        "album" => Ok(nori_host::Fetch::Album(id, source)),
+        "playlist" => Ok(nori_host::Fetch::Playlist(id, if mixed { nori_host::PlaylistAt::Device } else { nori_host::PlaylistAt::Source { source } })),
+        "artist" => Ok(nori_host::Fetch::Artist(id, source)),
         "mix" => Ok(nori_host::Fetch::Mix(id)),
         _ => Err(error(format!("no such kind: {kind}"))),
     }

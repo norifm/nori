@@ -1,5 +1,6 @@
 package dev.nori.music.playback
 
+import dev.nori.music.data.key
 import android.content.ComponentName
 import android.content.Context
 import android.os.Bundle
@@ -462,7 +463,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         // the player is still on the old one. Which row of the page's list that is, the core decides
         // (crates/queue/src/heard.rs shown_row).
         val heardIndex = (p as? MediaController)?.takeIf(::heard)?.let {
-            nori.session.heardShownRow(this.heardIndex.takeIf { it >= 0 }?.toUInt(), queue.map { it.id }, item?.mediaId)?.toInt()
+            nori.session.heardShownRow(this.heardIndex.takeIf { it >= 0 }?.toUInt(), queue.map { it.key }, item?.key)?.toInt()
         }
         _mixing.value = p.isPlaying && PlaybackService.rustPlayer?.mixing == true
         _state.value = old.copy(
@@ -510,7 +511,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         val order = ArrayList<UInt>(t.windowCount)
         var i = if (t.isEmpty) C.INDEX_UNSET else t.getFirstWindowIndex(p.shuffleModeEnabled)
         while (i != C.INDEX_UNSET) { order += i.toUInt(); i = t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, p.shuffleModeEnabled) }
-        return nori.session.playlistViewOf(items.map { it.mediaId }, items.map { it.queuedAs() ?: dev.nori.music.ffi.queue.Hand.NO }, order)
+        return nori.session.playlistViewOf(items.keys(), items.map { it.queuedAs() ?: dev.nori.music.ffi.queue.Hand.NO }, order)
     }
 
     private fun items(songs: List<Song>): List<MediaItem> = songs.toMediaItems(nori.session) { CarArt.cover(context, it.coverArt, NOTIFICATION_ART)?.toString() }
@@ -546,7 +547,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
      * song plays as [play] would.
      */
     fun keepPlaying(songs: List<Song>, at: Int, from: PageOrigin? = null) = with { c ->
-        if (mirror != null || c.currentMediaItem?.mediaId != songs.getOrNull(at)?.id) return@with play(songs, at, from = from)
+        if (mirror != null || c.currentMediaItem?.key != songs.getOrNull(at)?.key) return@with play(songs, at, from = from)
         nori.session.playlistShowShuffle(false)
         c.shuffleModeEnabled = false
         val made = items(songs).toMutableList()

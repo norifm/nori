@@ -56,6 +56,10 @@ addEventListener("hashchange", () => {
 /** The address of a page. */
 export const href = (top: string, arg = "") => (arg ? `#/${top}/${encodeURIComponent(arg)}` : `#/${top}`);
 
+/** The address of an album, artist or playlist, carrying its source when it is not the profile's own. */
+export const itemHref = (top: string, id: string, source?: string | null, mixed = false) =>
+  mixed ? `#/${top}/${encodeURIComponent(id)}/~` : source ? `#/${top}/${encodeURIComponent(id)}/${encodeURIComponent(source)}` : href(top, id);
+
 /** Opens page `top`; from the full player it takes the player's step in the history, so Back from it comes
  * to where the player was opened. */
 export function go(top: string, arg = "") {

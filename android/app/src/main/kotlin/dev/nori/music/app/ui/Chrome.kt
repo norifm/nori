@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import dev.nori.music.data.key
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.drawBehind
@@ -508,7 +509,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                 // Seals where songs carry favorites (a provider's only signed in): the bar's one color, the accent.
                 val tap = LocalSealTap.current
                 if (LocalRules.current.stars) song?.let { s ->
-                    val starred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
+                    val starred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, s.key, s.starred)
                     Box(standing) { FavoriteSeal(starred, tint = look.color(CoverLook.ACCENT), muted = look.color(CoverLook.CHROME_CONTENT_65)) { tap(s, !starred) } }
                 }
             }

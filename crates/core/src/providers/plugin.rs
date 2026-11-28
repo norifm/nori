@@ -17,7 +17,7 @@ use crate::browse::{AlbumSort, LibrarySection, ProfileRules, SettingsPart};
 use crate::cache_policy::{Page, Parts, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
 use crate::settings::{SavedServer, ServerKind};
-use crate::stream::{StreamQuality, StreamTarget};
+use crate::stream::{Stream, StreamQuality};
 use crate::transport::{block_on, NetError, Transport};
 use crate::{Album, AlbumDetail, ArtistDetail, ArtistInfo, Core, FeedShelf, PlaylistDetail, SearchResult, Song, Starred};
 
@@ -355,7 +355,7 @@ impl Provider for PluginProvider {
     }
 
     /// The plugin resolves its songs where they open; the bytes are kept by song and bit rate.
-    fn stream(&self, _: &Client, id: String, q: StreamQuality) -> StreamTarget {
+    fn stream(&self, _: &Client, id: String, q: StreamQuality) -> Stream {
         resolved_stream(ADDRESS, &id, &q)
     }
 
@@ -548,8 +548,7 @@ impl nori_plugins::Media for Client {
     }
 
     fn cover_url(&self, id: &str, size: u32) -> Option<String> {
-        let url = self.core.cover_address(id.to_string(), size);
-        url.starts_with("http").then_some(url)
+        self.core.cover_address(id.to_string(), size).filter(|url| url.starts_with("http"))
     }
 }
 

@@ -182,7 +182,7 @@ pub trait Track {
         false
     }
     /// Song `id`'s first frame is the next written, `at_ms` into it.
-    fn song_starts(&mut self, _id: &str, _at_ms: i64) {}
+    fn song_starts(&mut self, _id: &crate::key::ItemKey, _at_ms: i64) {}
 }
 
 /// The processors and the buffers they run in. Allocation-free once the buffers have grown.

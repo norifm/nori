@@ -138,26 +138,34 @@ fun HomeScreen(actions: ActionsViewModel, settings: dev.nori.music.app.vm.Settin
             // A source's own shelves (`ProfileRules.feed`), titled as it titles them; each kind drawn as the
             // library's shelves of that kind are.
             // Kept apart by title, not place, so a newer feed moves each shelf to its own place.
+            // The library's rows and the sources' own shelves in the order the core weaves them.
             val titled = mutableMapOf<String, Int>()
-            ui.feed.forEachIndexed { i, f ->
-                val route = "feed-$i"
-                val key = "feed:${f.title}#${titled.merge(f.title, 1, Int::plus)}"
-                if (f.songs.isNotEmpty()) songShelf(f.title, f.songs, vm, actions, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, f.title), "$route-songs", "$key-songs")
-                if (f.albums.isNotEmpty()) shelf(f.title, f.albums, vm, "$route-albums", "$key-albums")
-                if (f.playlists.isNotEmpty()) playlistShelf(f.title, f.playlists, vm, "$route-playlists", "$key-playlists")
-            }
             // A first start: the shelves' places until the first of them is answered.
             if (ui.reading) sketchItem(dev.nori.music.ffi.library.Reading.HOME)
-            ui.rows.forEach { shelf ->
-                // The favourite playlists are a selection of something the page fetches once for all of
-                // it, so their shelf is filled from there - but it stands where the user put it in the
-                // order.
-                val s = if (shelf.row == dev.nori.music.ffi.settings.HomeRow.PINNED) dev.nori.music.app.vm.Shelf.Playlists(shelf.row, ui.pinned) else shelf
-                if (s.isEmpty) return@forEach
-                when (s) {
-                    is dev.nori.music.app.vm.Shelf.Albums -> shelf(say.homeRow(s.row), s.albums, vm, s.row.name)
-                    is dev.nori.music.app.vm.Shelf.Playlists -> playlistShelf(say.homeRow(s.row), s.playlists, vm, s.row.name)
-                    is dev.nori.music.app.vm.Shelf.Songs -> songShelf(say.homeRow(s.row), s.songs, vm, actions, s.origin, s.row.name)
+            ui.places.forEach { place ->
+                when (place) {
+                    is dev.nori.music.ffi.HomePlace.Feed -> {
+                        val i = place.at.toInt()
+                        val f = ui.feed.getOrNull(i) ?: return@forEach
+                        val route = "feed-$i"
+                        val key = "feed:${f.title}#${titled.merge(f.title, 1, Int::plus)}"
+                        if (f.songs.isNotEmpty()) songShelf(f.title, f.songs, vm, actions, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, f.title), "$route-songs", "$key-songs")
+                        if (f.albums.isNotEmpty()) shelf(f.title, f.albums, vm, "$route-albums", "$key-albums")
+                        if (f.playlists.isNotEmpty()) playlistShelf(f.title, f.playlists, vm, "$route-playlists", "$key-playlists")
+                    }
+                    is dev.nori.music.ffi.HomePlace.Row -> {
+                        val shelf = ui.rows.getOrNull(place.at.toInt()) ?: return@forEach
+                        // The favourite playlists are a selection of something the page fetches once for all of
+                        // it, so their shelf is filled from there - but it stands where the user put it in the
+                        // order.
+                        val s = if (shelf.row == dev.nori.music.ffi.settings.HomeRow.PINNED) dev.nori.music.app.vm.Shelf.Playlists(shelf.row, ui.pinned) else shelf
+                        if (s.isEmpty) return@forEach
+                        when (s) {
+                            is dev.nori.music.app.vm.Shelf.Albums -> shelf(say.homeRow(s.row), s.albums, vm, s.row.name)
+                            is dev.nori.music.app.vm.Shelf.Playlists -> playlistShelf(say.homeRow(s.row), s.playlists, vm, s.row.name)
+                            is dev.nori.music.app.vm.Shelf.Songs -> songShelf(say.homeRow(s.row), s.songs, vm, actions, s.origin, s.row.name)
+                        }
+                    }
                 }
             }
         }
@@ -215,7 +223,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.shelf(
         Column(itemMotion()) {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(albums, key = { it.id }, contentType = { "album" }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, itemMotion()) }
+                items(albums, key = { it.rowKey }, contentType = { "album" }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, itemMotion()) }
             }
         }
     }
@@ -234,10 +242,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistShelf(
         Column(itemMotion()) {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(playlists, key = { it.id }, contentType = { "playlist" }) { p ->
+                items(playlists, key = { it.rowKey }, contentType = { "playlist" }) { p ->
                     val line = remember(p.songCount, p.comment) { playlistLine(p) }
                     val cardMenu = LocalCardMenu.current
-                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), PRINT, { nav.playlist(p.id, p) }, itemMotion(), onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
+                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), PRINT, { nav.playlist(p.id, p) }, itemMotion(), onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) }, mark = marked(p.sourceMarked, p.source))
                 }
             }
         }
@@ -278,8 +286,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songShelf(
         Column(itemMotion()) {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(songs.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                itemsIndexed(songs, key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { i, s ->
-                    CoverCard(s.title, s.artist, vm.cover(s.coverArt, CoverSize.CARD), PRINT, { actions.play(songs, i, from) }, itemMotion(), onLongClick = { menu(s) })
+                itemsIndexed(songs, key = { _, s -> s.rowKey }, contentType = { _, _ -> "song" }) { i, s ->
+                    CoverCard(s.title, s.artist, vm.cover(s.coverArt, CoverSize.CARD), PRINT, { actions.play(songs, i, from) }, itemMotion(), onLongClick = { menu(s) }, mark = marked(s.sourceMarked, s.source))
                 }
             }
         }
@@ -402,14 +410,14 @@ private fun RowFull(key: String, actions: ActionsViewModel, vm: dev.nori.music.a
         when (val e = entries) {
             null -> {}
             is dev.nori.music.app.vm.RowEntries.Albums -> PrintGrid(vm::loadMore) {
-                gridItems(e.albums, key = { it.id }, contentType = { "album" }) { a ->
+                gridItems(e.albums, key = { it.rowKey }, contentType = { "album" }) { a ->
                     AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
                 }
             }
             is dev.nori.music.app.vm.RowEntries.Playlists -> PrintGrid(vm::loadMore) {
-                gridItems(e.playlists, key = { it.id }, contentType = { "playlist" }) { p ->
+                gridItems(e.playlists, key = { it.rowKey }, contentType = { "playlist" }) { p ->
                     val cardMenu = LocalCardMenu.current
-                    CoverCard(p.name, remember(p.songCount, p.comment) { playlistLine(p) }, vm.cover(p.coverArt, CoverSize.CARD), PRINT, { nav.playlist(p.id, p) }, Modifier.fillMaxWidth(), fill = true, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
+                    CoverCard(p.name, remember(p.songCount, p.comment) { playlistLine(p) }, vm.cover(p.coverArt, CoverSize.CARD), PRINT, { nav.playlist(p.id, p) }, Modifier.fillMaxWidth(), fill = true, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) }, mark = marked(p.sourceMarked, p.source))
                 }
             }
             is dev.nori.music.app.vm.RowEntries.Songs -> {

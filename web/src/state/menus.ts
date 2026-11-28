@@ -95,7 +95,7 @@ function seal(s: Song, on: boolean): Item {
     label: on ? W.addToFavorites : W.removeFromFavorites,
     icon: on ? "seal" : "sealed",
     lit: !on,
-    run: () => library.change({ kind: "star", what: "song", id: s.id, on }).then(() => player.refresh()),
+    run: () => library.change({ kind: "star", what: "song", id: s.id, source: s.source ?? undefined, on }).then(() => player.refresh()),
     turns: () => seal(s, !on),
   };
 }
@@ -132,7 +132,7 @@ function item(a: MenuAction, s: Song): Item | null {
  * with Play (`play`, what clicking the row does); `extra` the page's own entries; `inPlayer` when opened
  * from the player. */
 export async function songMenu(s: Song, at: Anchor, { play, extra = [], inPlayer = false }: { play?: () => unknown; extra?: Item[] | Promise<Item[]>; inPlayer?: boolean } = {}) {
-  const lyrics = inPlayer && !!player.shown && player.shown.song === s.id;
+  const lyrics = inPlayer && !!player.shown && player.shown.song === s.key;
   const page = inPlayer ? "" : route.top;
   const { items: actions, quality } = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics, page, route.arg)) as { items: MenuAction[]; quality: string | null };
   const of = (place: MenuAction["place"], more?: boolean) =>

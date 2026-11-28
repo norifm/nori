@@ -35,11 +35,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.combine
+import dev.nori.music.settings.label
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
@@ -149,6 +151,22 @@ data class StorageUi(
 
 class SettingsViewModel(app: Application) : NoriViewModel(app) {
     val prefs: StateFlow<StoredPrefs> = nori.settings.prefs
+
+    /**
+     * The saved profile each of the open profile's sources is, by the id its items carry (null: the
+     * profile's own), for the mark an item shows beside a look-alike of another source (the core's
+     * `source_profile`).
+     */
+    val sourceProfiles: StateFlow<Map<String?, SavedServer>> = nori.settings.prefs
+        .map { p -> p.servers.map { it.id }.plus<String?>(null).associateWith { dev.nori.music.ffi.settings.sourceProfile(p.servers, p.activeServerId, it) } }
+        .map { all -> all.filterValues { it != null }.mapValues { it.value!! } }
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyMap())
+
+    /** What each of [sourceProfiles] is called: its name or address, else its provider's name. */
+    val sourceNames: StateFlow<Map<String?, String>> = combine(sourceProfiles, nori.plugins.names) { profiles, names ->
+        profiles.mapValues { (_, p) -> sourceName(p, names) }
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyMap())
 
     /** The settings in effect, with what enabled plugins override: what screens other than the settings wear and do. */
     val effective: StateFlow<StoredPrefs> = nori.settings.effective
@@ -701,7 +719,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             }
             if (addOn(dev.nori.music.ffi.AddEvent.Send(ready, afterAdding.takeIf { adds })) !is dev.nori.music.ffi.AddDo.Send) return@launch
             try {
-                nori.login(profile)
+                val accepted = nori.login(profile)
+                // Signed in to from a profile's Edit page: a source of that profile, which stays in use.
+                sourceFor?.let { to -> nori.sourcesChanged(dev.nori.music.ffi.settings.serversSourceAdded(prefs.value.serverList(), to, accepted)) }
                 val opened = addOn(dev.nori.music.ffi.AddEvent.Accepted) as? dev.nori.music.ffi.AddDo.Open
                 val added = opened?.added
                 // A new profile, in use now: the account shown so far was the last one's.
@@ -716,6 +736,41 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     fun switchServer(profile: SavedServer) = nori.activate(profile)
+
+    /** What a profile's Edit page lists of its sources: those it has, in order, and those it can take. */
+    data class SourcesUi(val sources: List<SavedServer>, val offered: List<SavedServer>)
+
+    /** Profile [id]'s sources and those it can take (the core's `profile_sources`, `sources_offered`); null for a profile that is a source. */
+    fun sourcesUi(id: String): SourcesUi? {
+        val servers = prefs.value.servers
+        val profile = servers.firstOrNull { it.id == id } ?: return null
+        if (dev.nori.music.ffi.settings.serversShown(servers).none { it.id == id }) return null
+        return SourcesUi(dev.nori.music.ffi.settings.profileSources(servers, profile), dev.nori.music.ffi.sourcesOffered(servers, profile))
+    }
+
+    /** Saved profile [source] as one more source of profile [to]. */
+    fun addSource(to: String, source: SavedServer) =
+        nori.sourcesChanged(dev.nori.music.ffi.settings.serversSourceAdded(prefs.value.serverList(), to, source))
+
+    /** Profile [id]'s source [source] moved [by] places among its sources. */
+    fun moveSource(id: String, source: String, by: Int) = changeProfile(id) { p ->
+        val at = p.sources.indexOf(source)
+        dev.nori.music.ffi.settings.profileSourcePlaced(p, source, (at + by).coerceAtLeast(0).toUInt())
+    }
+
+    /** Profile [id] without its source [source], which is a profile of its own again. */
+    fun removeSource(id: String, source: String) = changeProfile(id) { p -> dev.nori.music.ffi.settings.profileSourceRemoved(p, source) }
+
+    private fun changeProfile(id: String, change: (SavedServer) -> SavedServer) {
+        val list = prefs.value.serverList()
+        nori.sourcesChanged(list.copy(servers = list.servers.map { if (it.id == id) change(it) else it }))
+    }
+
+    /** The profile a new one signed in to becomes a source of ([signInAsSourceOf]); null for a profile of its own. */
+    private var sourceFor: String? = null
+
+    /** A profile signed in to from now on becomes a source of profile [id], from its Edit page; null: a profile of its own again. */
+    fun signInAsSourceOf(id: String?) { sourceFor = id }
     fun updateServer(profile: SavedServer) = nori.updateServer(profile)
     fun setProfileIcon(profile: SavedServer, icon: dev.nori.music.ffi.settings.ProfileIcon) = nori.setProfileIcon(profile, icon)
 
@@ -1060,3 +1115,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         }
     }
 }
+
+/** What saved profile [p] is called as a source: its name or address, else its provider's ([pluginNames] for a plugin's). */
+fun sourceName(p: SavedServer, pluginNames: Map<String, String>): String =
+    p.label.ifBlank { dev.nori.music.app.ui.say.provider(p.kind, (p.kind as? dev.nori.music.ffi.settings.ServerKind.Plugin)?.id?.let(pluginNames::get)).name }

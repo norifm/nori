@@ -1,5 +1,6 @@
 //! Speed, pitch and silence skipping through the output clock.
 
+use nori_player::key::ItemKey;
 use std::sync::{Arc, Mutex};
 
 use nori_player::pcm::Format;
@@ -246,13 +247,13 @@ impl Tap for Heard {
 }
 
 impl Preparing for Prepared {
-    fn tap(&self, id: &str, _format: Format, from: u64) -> Option<Box<dyn Tap>> {
+    fn tap(&self, id: &ItemKey, _format: Format, from: u64) -> Option<Box<dyn Tap>> {
         let mut h = self.heard.lock().unwrap();
-        h.push((id.to_string(), from, false));
+        h.push((id.id.clone(), from, false));
         Some(Box::new(Heard(self.heard.clone(), h.len() - 1)))
     }
-    fn prepared(&self, id: &str) -> Vec<(String, Arc<[u8]>)> {
-        self.data.lock().unwrap().iter().filter(|(s, _)| s == id).map(|(_, v)| ("marker".to_string(), Arc::from(&[*v][..]))).collect()
+    fn prepared(&self, id: &ItemKey) -> Vec<(String, Arc<[u8]>)> {
+        self.data.lock().unwrap().iter().filter(|(s, _)| *s == id.id).map(|(_, v)| ("marker".to_string(), Arc::from(&[*v][..]))).collect()
     }
     fn on_prepared(&self, _wake: Arc<dyn Fn() + Send + Sync>) {}
 }

@@ -377,7 +377,7 @@ impl Client {
     fn songs_page(&self, songs: Vec<Song>, actions: bool) -> BrowsePage {
         let downloaded = {
             let held = self.core.transfers().held();
-            songs.iter().map(|s| held.state(&s.id) == crate::transfers::HeldState::Done).collect()
+            songs.iter().map(|s| held.state(&crate::Keyed::key(s)) == crate::transfers::HeldState::Done).collect()
         };
         BrowsePage {
             downloaded,
@@ -391,6 +391,7 @@ impl Client {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ItemKey;
     use crate::client::tests::{block, client};
     use crate::client::NetProfile;
 
@@ -418,7 +419,7 @@ pub(crate) mod tests {
     fn albums_play_as_queue() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         c.core.download_queue(["s1", "s2"].map(|id| Song { id: id.into(), ..Default::default() }).to_vec()).unwrap();
-        c.core.download_settle(vec!["s2".into()], vec![true]).unwrap();
+        c.core.download_settle(vec![ItemKey::own("s2")], vec![true]).unwrap();
         fake.answer(ALBUM);
         let p = block(c.browse_children("album:a1".into(), 0, 100));
         assert_eq!(p.actions, [CarAction::Play, CarAction::Shuffle]);
@@ -630,7 +631,7 @@ pub(crate) mod tests {
             track: if id == "one" { 1 } else { 2 }, ..Default::default()
         }).to_vec();
         c.core.download_queue(songs).unwrap();
-        c.core.download_settle(vec!["one".into(), "two".into(), "loose".into()], vec![true; 3]).unwrap();
+        c.core.download_settle(vec![ItemKey::own("one"), ItemKey::own("two"), ItemKey::own("loose")], vec![true; 3]).unwrap();
         let root = block(c.browse_children("downloads".into(), 0, 100));
         assert_eq!(root.folders.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["downloaded:album"]);
         assert_eq!(root.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["loose"]);

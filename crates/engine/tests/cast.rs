@@ -2,6 +2,7 @@
 //! device speaking nori-sink-protocol reads it always, asks for more when low, and plays what it holds
 //! in time. Tests read what the device received and played.
 
+use nori_player::key::ItemKey;
 use crate::common::{self, Stepper, Virtual};
 
 use std::collections::VecDeque;
@@ -360,14 +361,16 @@ struct Files {
 }
 
 impl Library for Files {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let (_, ms, hint) = self.songs.iter().find(|s| s.0 == id).ok_or("no such song")?;
         Ok(Located { source: Source::File(vec![self.dir.join(id)]), hint: Some((*hint).into()), duration_ms: Some(*ms), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
         let ms = self.songs.iter().find(|s| s.0 == id).map_or(0, |s| s.1);
-        WindowSong { id: id.into(), title: id.into(), duration_ms: ms, album_id: Some("album".into()), ..Default::default() }
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: ms, album_id: Some(ItemKey::own("album")), ..Default::default() }
     }
 }
 
@@ -389,11 +392,11 @@ impl nori_engine::Queue for Queue {
 pub struct Covers;
 
 impl Shows for Covers {
-    fn now(&self, id: &str) -> Option<Shown> {
-        Some(Shown { title: id.into(), ..Shown::default() })
+    fn now(&self, key: &ItemKey) -> Option<Shown> {
+        Some(Shown { title: key.id.clone(), ..Shown::default() })
     }
-    fn cover(&self, id: &str, _size: u32) -> Option<(String, Vec<u8>)> {
-        Some((id[..1].to_string(), vec![0xff, 0xd8, 0xff, 0xd9]))
+    fn cover(&self, key: &ItemKey, _size: u32) -> Option<(String, Vec<u8>)> {
+        Some((key.id[..1].to_string(), vec![0xff, 0xd8, 0xff, 0xd9]))
     }
 }
 
@@ -432,7 +435,7 @@ impl Rig {
             std::fs::write(dir.join(s.id), &s.file).unwrap();
         }
         let mut list = Playlist::default();
-        list.set(songs.iter().map(|s| s.id.to_string()).collect(), Some(0), false, 0);
+        list.set(songs.iter().map(|s| s.id.to_string()).map(ItemKey::own).collect(), Some(0), false, 0);
         let list = Arc::new(Mutex::new(list));
         let library = Files { dir: dir.clone(), songs: songs.iter().map(|s| (s.id.to_string(), s.ms, s.hint)).collect() };
         let clock = Virtual::default();
@@ -832,5 +835,5 @@ fn a_device_gone_stops_the_music_as_a_dead_card_would() {
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |d| d.heard.len() > 44_100));
     rig.dev.lock().deep.lost();
-    assert!(rig.time.until(Duration::from_secs(5), || rig.events.lock().iter().any(|e| matches!(e, Event::Error { id, .. } if id.is_empty()))), "said: {:?}", rig.events.lock());
+    assert!(rig.time.until(Duration::from_secs(5), || rig.events.lock().iter().any(|e| matches!(e, Event::Error { id: None, .. }))), "said: {:?}", rig.events.lock());
 }

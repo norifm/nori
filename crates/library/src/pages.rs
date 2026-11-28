@@ -463,6 +463,9 @@ pub struct ArtistDetail {
     pub songs: Vec<Song>,
     /// [`release_groups`].
     pub groups: Vec<ReleaseGroup>,
+    /// How many songs its releases hold; None when one of them does not say (a service's often does
+    /// not), so a part is never shown as the whole.
+    pub release_songs: Option<u32>,
     pub queue: std::sync::Arc<PageQueue>,
 }
 
@@ -473,8 +476,9 @@ impl ArtistDetail {
             a.subtitle = nori_model::lines::album_subtitle("", a.year);
         }
         let groups = release_groups(&albums);
+        let release_songs = albums.iter().map(|a| (a.song_count > 0).then_some(a.song_count)).sum();
         let queue = PageQueue::of(OriginKind::Artist, &artist.id);
-        ArtistDetail { artist, albums, songs, groups, queue }
+        ArtistDetail { artist, albums, songs, groups, release_songs, queue }
     }
 }
 
@@ -547,6 +551,17 @@ mod tests {
 
     fn song(disc: u32) -> Song {
         Song { disc_number: disc, ..Default::default() }
+    }
+
+    /// An artist's releases count their songs only when every one says how many it holds: a service's
+    /// album that does not leaves the count unsaid, not short.
+    #[test]
+    fn an_artists_songs_are_counted_only_when_every_release_says() {
+        let album = |songs: u32| Album { song_count: songs, ..Album::default() };
+        let count = |albums: Vec<Album>| ArtistDetail::new(Artist::default(), albums, Vec::new()).release_songs;
+        assert_eq!(count(vec![album(10), album(3)]), Some(13));
+        assert_eq!(count(vec![album(1), album(0), album(0)]), None, "a merged page of a library's album and a service's");
+        assert_eq!(count(Vec::new()), Some(0));
     }
 
     #[test]

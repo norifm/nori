@@ -248,7 +248,7 @@ pub(crate) fn stale(w: &Write) -> &'static [&'static str] {
 }
 
 /// The page `read` makes of a source that has nothing for it.
-fn empty(read: &Read) -> NetResult<Page> {
+pub(crate) fn empty(read: &Read) -> NetResult<Page> {
     Ok(match read {
         Read::AlbumList { .. } | Read::AlbumsByYear { .. } | Read::FavouriteAlbums { .. } => Page::Albums { v: Vec::new() },
         Read::ArtistIndex | Read::FolderIndex => Page::Artists { v: Vec::new() },
@@ -441,7 +441,7 @@ impl Client {
     pub(crate) fn marked_favourites(&self, starred: Starred) -> Starred {
         let marks = self.core.stars.lock().clone();
         let starred = marks.overlay(starred);
-        let mut missing: Vec<&String> = marks.songs.iter().filter(|(id, on)| **on && !starred.songs.iter().any(|s| &s.id == *id)).map(|(id, _)| id).collect();
+        let mut missing: Vec<&String> = marks.songs_starred().filter(|id| !starred.songs.iter().any(|s| &s.id == *id)).collect();
         missing.sort();
         let mut songs: Vec<Song> =
             missing.into_iter().filter_map(|id| self.stored_song_of(id).or_else(|| self.core.indexed_song(id))).map(|s| Song { starred: true, ..s }).collect();
@@ -486,8 +486,20 @@ impl Client {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// Asks the profile's source, bypassing the kept pages; what it lists is indexed.
+    /// Asks the profile's sources, bypassing the kept pages: every source of a list read, merged
+    /// (sources.rs); what each lists is indexed in its own rows.
     pub async fn read_now(&self, read: Read) -> NetResult<Page> {
+        let others = self.others_for(&read);
+        if others.is_empty() {
+            return self.read_now_own(read).await;
+        }
+        self.read_now_merged(read, others).await
+    }
+}
+
+impl Client {
+    /// Asks the profile's own source, bypassing the kept pages; what it lists is indexed.
+    pub(crate) async fn read_now_own(&self, read: Read) -> NetResult<Page> {
         let provider = self.core.provider();
         let page = match provider.read(self, read.clone()).await? {
             Some(Answer::Page(page)) => *page,
@@ -617,7 +629,7 @@ impl Client {
         if matches!(read, Read::HomeFeed) {
             return self.home_fetch(stored_digest).await;
         }
-        let Some((k, _)) = self.kept_key(&read) else { return self.read_now(read).await.map(Some) };
+        let Some((k, _)) = self.kept_key(&read) else { return self.read_now_own(read).await.map(Some) };
         let revision = self.core.cache_revision.load(std::sync::atomic::Ordering::Relaxed);
         let provider = self.core.provider();
         let folders = matches!(read, Read::FolderIndex);
@@ -811,7 +823,7 @@ mod tests {
         block(c.cached_or_fetched(Read::GenreList)).unwrap();
         block(c.cached_or_fetched(Read::HomeFeed)).unwrap();
         c.core.mix_favourites(vec![Song { id: "s1".into(), ..Default::default() }]);
-        c.core.stars.lock().mark(Starrable::Song, "s1".into(), true);
+        c.core.stars.lock().insert(Starrable::Song, "s1".into(), true);
         c.core.configure(config("h")).unwrap();
         assert!(!c.core.kept.lock().is_empty() && c.core.home.lock().is_some(), "the same server keeps it all");
         c.core.configure(config("http://other")).unwrap();
@@ -924,7 +936,7 @@ mod tests {
         let (c, fake) = setup();
         fake.answer(r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"fa-1","name":"A"},{"id":"fa-2","name":"B"}]}}}"#);
         block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::Starred, size: 20, offset: 0, genre: None }, None, None)).unwrap();
-        c.core.stars.lock().mark(crate::client::Starrable::Album, "fa-2".into(), false);
+        c.core.stars.lock().insert(crate::client::Starrable::Album, "fa-2".into(), false);
         match c.read_stored(Read::FavouriteAlbums { size: 20 }).unwrap().page {
             Some(Page::Albums { v }) => assert_eq!(v.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["fa-1"]),
             other => panic!("{other:?}"),

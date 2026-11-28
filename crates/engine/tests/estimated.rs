@@ -3,6 +3,7 @@
 //! and seeks, and neither the 416 nor a clean early end is a failure. Ogg Opus songs come from ffmpeg;
 //! without it the tests pass trivially.
 
+use nori_player::key::ItemKey;
 use crate::common;
 
 use std::io::Read;
@@ -175,7 +176,8 @@ impl Transcoder {
 struct Songs(Arc<Transcoder>, Vec<(String, i64)>, Option<Arc<Store>>);
 
 impl Library for Songs {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let ms = self.1.iter().find(|(i, _)| i == id).map(|s| s.1).ok_or("no such song")?;
         let (url, bytes) = (id.to_string(), self.0.clone() as Arc<dyn ByteSource>);
         let source = match &self.2 {
@@ -185,9 +187,10 @@ impl Library for Songs {
         Ok(Located { source, hint: Some("opus".into()), duration_ms: Some(ms).filter(|&d| d > 0), estimated: true, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
         let ms = self.1.iter().find(|(i, _)| i == id).map_or(0, |s| s.1);
-        WindowSong { id: id.into(), title: id.into(), duration_ms: ms, ..Default::default() }
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: ms, ..Default::default() }
     }
 }
 
@@ -259,7 +262,7 @@ fn rig_making(extra: u64, says: bool, ends: Ends, cut: Option<(&str, usize)>, ma
     });
     let songs = vec![("a".to_string(), making.a_ms), ("b".to_string(), B_SECS as i64 * 1000), ("c".to_string(), B_SECS as i64 * 1000)];
     let queue = SharedQueue::default();
-    queue.0.lock().set(songs.iter().map(|s| s.0.clone()).collect(), Some(0), false, 0);
+    queue.0.lock().set(songs.iter().map(|s| s.0.clone()).map(ItemKey::own).collect(), Some(0), false, 0);
     let card = Card::new();
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = events.clone();
@@ -278,7 +281,7 @@ impl Rig {
     }
 
     fn heard_song_since(&self, from: usize, id: &str) -> bool {
-        self.events.lock().iter().skip(from).any(|e| matches!(e, Event::Song { id: i, .. } if i == id))
+        self.events.lock().iter().skip(from).any(|e| matches!(e, Event::Song { id: i, .. } if i.id == id))
     }
 
     /// Plays `a`; returns clock time until it is heard.

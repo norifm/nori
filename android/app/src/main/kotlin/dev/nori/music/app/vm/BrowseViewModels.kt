@@ -1,5 +1,6 @@
 package dev.nori.music.app.vm
 
+import dev.nori.music.data.key
 import android.app.Application
 import androidx.lifecycle.viewModelScope
 import dev.nori.music.ffi.favoritesInOrder
@@ -81,9 +82,25 @@ sealed interface Shelf {
     }
 }
 
-/** The home page: the library's shelves, or ([feed]) the source's own shelves (`ProfileRules.feed`). */
-/** Home's shelves; [reading] while none has anything to show and one is still on its way (a first start). */
-data class HomeUi(val rows: List<Shelf> = emptyList(), val pinned: List<Playlist> = emptyList(), val feed: List<dev.nori.music.ffi.model.FeedShelf> = emptyList(), val reading: Boolean = false)
+/**
+ * The home page: the library's shelves ([rows]) and the sources' own shelves ([feed], `ProfileRules.feed`),
+ * in the order [places] gives (the core's `home_woven`); [reading] while none has anything to show and one
+ * is still on its way (a first start).
+ */
+data class HomeUi(
+    val rows: List<Shelf> = emptyList(),
+    val pinned: List<Playlist> = emptyList(),
+    val feed: List<dev.nori.music.ffi.model.FeedShelf> = emptyList(),
+    val places: List<dev.nori.music.ffi.HomePlace> = emptyList(),
+    val reading: Boolean = false,
+)
+
+/** What [shelf] holds, as the core weighs Home's shelves ([pinned] for the favourite playlists' row). */
+private fun itemsOf(shelf: Shelf, pinned: List<Playlist>): dev.nori.music.ffi.ShelfItems = when (shelf) {
+    is Shelf.Albums -> dev.nori.music.ffi.ShelfItems.Albums(shelf.albums)
+    is Shelf.Playlists -> dev.nori.music.ffi.ShelfItems.Playlists(if (shelf.row == HomeRow.PINNED) pinned else shelf.playlists)
+    is Shelf.Songs -> dev.nori.music.ffi.ShelfItems.Songs(shelf.songs)
+}
 
 /** How much of Home its first screen shows: mix tiles, shelves under them, and prints of each shelf. */
 private const val FIRST_TILES = 3
@@ -104,7 +121,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
     init {
         // Music started, or the player came to show the offered song (another device's it controls, found
         // after the page asked): the page lets the offer go.
-        viewModelScope.launch { nori.player.state.collect { s -> if (_offer.value != null && !offered.still(s.current?.id, s.playing)) _offer.value = null } }
+        viewModelScope.launch { nori.player.state.collect { s -> if (_offer.value != null && !offered.still(s.current?.key, s.playing)) _offer.value = null } }
     }
 
     /** Asked each time the page comes into sight; a jam guest's Home is the host's, and the core offers nothing. */
@@ -112,9 +129,9 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
         val asked = nori.player.state.value
         viewModelScope.launch {
             _offer.value = withContext(Dispatchers.IO) {
-                val found = runCatching { nori.library.queueOffer(asked.playing, asked.current?.id) }.getOrNull()
+                val found = runCatching { nori.library.queueOffer(asked.playing, asked.current?.key) }.getOrNull()
                 val now = nori.player.state.value
-                found.takeIf { offered.found(found, now.current?.id, now.playing) }
+                found.takeIf { offered.found(found, now.current?.key, now.playing) }
             }
         }
     }
@@ -200,10 +217,14 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
             val kept = runCatching { nori.library.homeKept(shown, rules.mixes) }.onFailure { dev.nori.music.NoriLog.w("home: nothing kept read: ${it.message}") }.getOrNull()
             val tiles = kept?.let(::opened).orEmpty()
             _firstTints.value = (tiles.take(FIRST_TILES).map { it.covers.firstOrNull() } + offerCover(kept?.offer)).filterNotNull()
-            // A source's own Home is its feed, asked again on a refresh.
-            if (rules.feed) {
-                kept?.feed?.let { emit(HomeUi(feed = it)) }
-                return@flow emitAll(refreshes.flatMapLatest { nori.library.homeFeed() }.catch { failed(it); emit(emptyList()) }.map { HomeUi(feed = it) })
+            // The sources' own Homes (their feeds), asked again on a refresh; the library's rows where some
+            // source is a library (the core's `library_home`).
+            val library = withContext(Dispatchers.IO) { nori.client.libraryHome() }
+            val keptFeed = kept?.feed.orEmpty()
+            val feed = refreshes.flatMapLatest { flow { nori.library.homeFeedRefreshed()?.let { emit(it) } }.catch { failed(it) } }.onStart { emit(keptFeed) }
+            if (!library) {
+                kept?.let { emit(HomeUi(feed = keptFeed, places = it.places)) }
+                return@flow emitAll(feed.map { f -> HomeUi(feed = f, places = withContext(Dispatchers.Default) { dev.nori.music.ffi.homePlaces(emptyList(), f) }) })
             }
             val keptShelves = shown.zip(shelves).mapIndexed { i, (r, shelf) -> shelfOf(r, shelf, kept?.shelves?.getOrNull(i)) }
             val keptPinned = kept?.shelves?.getOrNull(shelves.indexOf(HomeShelf.Pinned))?.let { (it as? dev.nori.music.ffi.ShelfItems.Playlists)?.v }.orEmpty()
@@ -217,15 +238,21 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
             val known = keptShelves.mapIndexed { i, k -> !k.isEmpty || shelves[i] == HomeShelf.Pinned }
             val live = combine(shown.zip(shelves).mapIndexed { i, (r, shelf) -> source(r, shelf, keptShelves[i]).withIndex().map { (n, s) -> s to (n > 0 || known[i]) } }) { it.toList() }
                 .onStart { emit(keptShelves.zip(known)) }
-            // Reading: nothing to show yet, and a shelf still on its way.
-            emitAll(combine(live, pinned) { s, p -> HomeUi(s.map { it.first }, p, reading = s.all { it.first.isEmpty } && !s.all { it.second }) })
+            emitAll(combine(live, pinned, feed) { s, p, f -> Triple(s, p, f) }.map { (s, p, f) ->
+                val rows = s.map { it.first }
+                HomeUi(
+                    rows, p, f,
+                    withContext(Dispatchers.Default) { dev.nori.music.ffi.homePlaces(rows.map { itemsOf(it, p) }, f) },
+                    reading = s.all { it.first.isEmpty } && f.isEmpty() && !s.all { it.second },
+                )
+            })
         }
     }.distinctUntilChanged().asLoad()
 
     /** What the page opened with besides its shelves, as kept: the queue offered, and the mixes' tiles, returned. */
     private fun opened(kept: dev.nori.music.ffi.HomeKept): List<MixCard> {
         val now = nori.player.state.value
-        _offer.value = kept.offer.takeIf { offered.found(it, now.current?.id, now.playing) }
+        _offer.value = kept.offer.takeIf { offered.found(it, now.current?.key, now.playing) }
         return if (kept.mixes.isEmpty()) emptyList() else keepCards(nori.settings.value.activeServerId, nori.settings.effective.value.tasteModel, kept.mixes)
     }
 
@@ -322,7 +349,7 @@ class HomeRowViewModel(app: Application) : NoriViewModel(app) {
     /** A feed shelf, whole, from where it is on the feed ([key] `feed-<place>-<kind>`). */
     private suspend fun readFeed(key: String) {
         val (place, kind) = key.split('-').let { it[1].toInt() to it[2] }
-        val shelf = nori.library.homeFeed().first().getOrNull(place) ?: return
+        val shelf = nori.library.homeFeedKept()?.getOrNull(place) ?: return
         _title.value = shelf.title
         _entries.value = when (kind) {
             "songs" -> RowEntries.Songs(shelf.songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, shelf.title))
@@ -504,10 +531,11 @@ class RadioViewModel(app: Application) : NoriViewModel(app) {
 
 @OptIn(ExperimentalCoroutinesApi::class)
 abstract class DetailViewModel<T>(app: Application) : NoriViewModel(app) {
-    protected val id = MutableStateFlow<String?>(null)
-    fun open(id: String) { this.id.value = id }
-    protected abstract fun load(id: String): kotlinx.coroutines.flow.Flow<T>
-    val ui: StateFlow<Load<T>> by lazy { id.flatMapLatest { if (it == null) flow { } else load(it) }.asLoad() }
+    /** The item shown: its id, and the profile's source it comes from (null: the profile's own). */
+    protected val id = MutableStateFlow<Pair<String, String?>?>(null)
+    fun open(id: String, source: String? = null) { this.id.value = id to source }
+    protected abstract fun load(id: String, source: String?): kotlinx.coroutines.flow.Flow<T>
+    val ui: StateFlow<Load<T>> by lazy { id.flatMapLatest { if (it == null) flow { } else load(it.first, it.second) }.asLoad() }
 }
 
 open class AlbumViewModel(app: Application) : DetailViewModel<AlbumDetail>(app) {
@@ -518,7 +546,7 @@ open class AlbumViewModel(app: Application) : DetailViewModel<AlbumDetail>(app) 
      * is watched, and only on those moves, not on every player event.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun load(id: String) = remoteSounding().flatMapLatest { nori.library.album(id) }
+    override fun load(id: String, source: String?) = remoteSounding().flatMapLatest { nori.library.album(id, source) }
 
     private fun remoteSounding() = nori.player.state.map { s -> s.current?.takeIf { s.playing && it.isExternal }?.id }.distinctUntilChanged()
 }
@@ -526,19 +554,19 @@ open class AlbumViewModel(app: Application) : DetailViewModel<AlbumDetail>(app) 
 /** An album's downloaded songs; once none are left, the album's own page, so removing them leaves it open. */
 class DownloadedAlbumViewModel(app: Application) : AlbumViewModel(app) {
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun load(id: String) = nori.downloads.state
+    override fun load(id: String, source: String?) = nori.downloads.state
         .map { withContext(Dispatchers.IO) { nori.core.downloadedAlbum(id) } }
         .distinctUntilChanged()
-        .flatMapLatest { saved -> saved?.let { flowOf(it) } ?: super.load(id) }
+        .flatMapLatest { saved -> saved?.let { flowOf(it) } ?: super.load(id, source) }
 }
 
 data class ArtistUi(val detail: ArtistDetail, val info: ArtistInfo?, val top: List<Song>)
 
 class ArtistViewModel(app: Application) : DetailViewModel<ArtistUi>(app) {
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun load(id: String) = nori.library.artist(id).flatMapLatest { d ->
+    override fun load(id: String, source: String?) = nori.library.artist(id, source).flatMapLatest { d ->
         combine(
-            nori.library.artistInfo(id).map<ArtistInfo, ArtistInfo?> { it }.catch { emit(null) }.onStart { emit(null) },
+            nori.library.artistInfo(id, source).map<ArtistInfo, ArtistInfo?> { it }.catch { emit(null) }.onStart { emit(null) },
             // None where the page lists the artist's songs already (a provider's top songs).
             (dev.nori.music.ffi.artistTopSongs(d.artist, d.songs.isNotEmpty())?.let { nori.library.topSongs(it) } ?: flowOf(emptyList()))
                 .catch { emit(emptyList()) }.onStart { emit(emptyList()) },
@@ -546,17 +574,23 @@ class ArtistViewModel(app: Application) : DetailViewModel<ArtistUi>(app) {
     }
 }
 
-class PlaylistViewModel(app: Application) : DetailViewModel<PlaylistDetail>(app) {
+@OptIn(ExperimentalCoroutinesApi::class)
+class PlaylistViewModel(app: Application) : NoriViewModel(app) {
+    /** The playlist shown: its id, and where it is kept. */
+    private val shown = MutableStateFlow<Pair<String, dev.nori.music.ffi.PlaylistAt>?>(null)
+    fun open(id: String, at: dev.nori.music.ffi.PlaylistAt) { shown.value = id to at }
+
     /** Read again after a playlist changed here (renamed, a song moved or taken out). */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    override fun load(id: String) = nori.library.playlistsVersion.flatMapLatest { nori.library.playlist(id) }
+    val ui: StateFlow<Load<PlaylistDetail>> by lazy {
+        shown.flatMapLatest { s -> if (s == null) flow { } else nori.library.playlistsVersion.flatMapLatest { nori.library.playlist(s.first, s.second) } }.asLoad()
+    }
 }
 
 /** A genre's songs, and the cover its tile in search shows. */
 class GenrePage(val songs: List<Song>, val coverArt: String?)
 
 class GenreViewModel(app: Application) : DetailViewModel<GenrePage>(app) {
-    override fun load(id: String) = flow { emit(GenrePage(nori.library.songsByGenre(id), runCatching { nori.library.genreCover(id) }.getOrNull())) }
+    override fun load(id: String, source: String?) = flow { emit(GenrePage(nori.library.songsByGenre(id), runCatching { nori.library.genreCover(id) }.getOrNull())) }
 }
 
 /** The orders of the "all songs" list; what each sorts on is the core's (`song_sorts`), its name Say's. */

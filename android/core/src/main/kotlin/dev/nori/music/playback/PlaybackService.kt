@@ -1,5 +1,6 @@
 package dev.nori.music.playback
 
+import dev.nori.music.data.key
 import dev.nori.music.core.R
 import dev.nori.music.ffi.queue.FillNext
 import dev.nori.music.ffi.model.ButtonAct
@@ -34,6 +35,7 @@ import dev.nori.music.Nori
 import dev.nori.music.settings.loggedIn
 import dev.nori.music.data.StarKind
 import dev.nori.music.ffi.model.NoriButton
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.plugins.ButtonPress
 import dev.nori.music.ffi.plugins.Glyph
@@ -90,6 +92,8 @@ class PlaybackService : MediaLibraryService() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_ARTIST = "artist"
         const val EXTRA_PLAYING = "playing"
+        /** The song's source (none for the profile's own) and id. */
+        const val EXTRA_SOURCE = "source"
         const val EXTRA_ID = "id"
         const val EXTRA_COVER = "cover"
         /** Where the song was when this was sent, ms, at [EXTRA_AT] (elapsedRealtime), moving at [EXTRA_SPEED]. */
@@ -413,9 +417,9 @@ class PlaybackService : MediaLibraryService() {
     private val listener = object : Player.Listener {
         override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
             item?.let { observer?.song(it.mediaId) }
-            item?.mediaId?.let { id ->
+            item?.let { i ->
                 if (nori.session.deciding()) scope.launch {
-                    withContext(Dispatchers.IO) { nori.session.nowPlaying(id) }?.let { player.showAs(id, it) }
+                    withContext(Dispatchers.IO) { nori.session.nowPlaying(i.key) }?.let { player.showAs(i.mediaId, it) }
                 }
             }
             observer?.arrived(player.currentMediaItemIndex, reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO, player.shuffleModeEnabled)
@@ -423,7 +427,7 @@ class PlaybackService : MediaLibraryService() {
             // The player walked the core's queue itself (explicit songs skipped, each song's volume set):
             // this is only the song the ear arrived on.
             refreshButtons()
-            scrobbler.onTrack(item?.mediaId, if (looped) dev.nori.music.ffi.queue.TrackChange.LOOPED else dev.nori.music.ffi.queue.TrackChange.MOVED, player.isPlaying)
+            scrobbler.onTrack(item?.key, if (looped) dev.nori.music.ffi.queue.TrackChange.LOOPED else dev.nori.music.ffi.queue.TrackChange.MOVED, player.isPlaying)
             if (looped) return
             // What a new song asks for is the core's, in one answer (rules.rs song_arrived): the queue saved
             // a moment later, songs fetched for its end, the offline bridge's turn, fetching ahead, and the
@@ -530,8 +534,9 @@ class PlaybackService : MediaLibraryService() {
     private var buttonsAsked: kotlinx.coroutines.Job? = null
 
     /** As the app's heart has it: this session's mark, else the song as the queue playing it holds it - another device's while it plays. */
-    private fun currentStarred(item: MediaItem): Boolean =
-        nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown === elsewhere) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
+    private fun currentStarred(item: MediaItem): Boolean = item.key.let { key ->
+        nori.library.isStarred(StarKind.SONG, key, if (shown === elsewhere) elsewhere.currentStarred else nori.session.queueStarred(key))
+    }
 
     /**
      * The buttons beside previous / play / next. Called when the track, the shuffle flag, repeat, a star or
@@ -554,7 +559,7 @@ class PlaybackService : MediaLibraryService() {
             Player.REPEAT_MODE_ONE -> dev.nori.music.ffi.plugins.Repeat.ONE
             else -> dev.nori.music.ffi.plugins.Repeat.OFF
         }
-        buttonsAsked = scope.launch { showButtons(nori.plugins.notificationButtons(item?.mediaId, own, mode), own, repeat) }
+        buttonsAsked = scope.launch { showButtons(nori.plugins.notificationButtons(item?.key, own, mode), own, repeat) }
     }
 
     private fun showButtons(buttons: List<NotificationButton>, own: dev.nori.music.ffi.model.SessionButtons, repeat: Int) {
@@ -681,9 +686,10 @@ class PlaybackService : MediaLibraryService() {
         remoteState()
         if (!nori.widgets.any) return
         val m = player.currentMediaItem?.mediaMetadata
+        val key = player.currentMediaItem?.takeUnless { it.isRadio }?.key
         sendBroadcast(android.content.Intent(ACTION_STATE).setPackage(packageName)
             .putExtra(EXTRA_TITLE, m?.title?.toString()).putExtra(EXTRA_ARTIST, m?.artist?.toString()).putExtra(EXTRA_PLAYING, player.isPlaying)
-            .putExtra(EXTRA_ID, player.currentMediaItem?.mediaId).putExtra(EXTRA_COVER, m?.artworkUri?.let { a -> CarArt.coverOf(a)?.let { (id, size) -> nori.library.coverUrl(id, size) } ?: a.toString() })
+            .putExtra(EXTRA_SOURCE, key?.source).putExtra(EXTRA_ID, key?.id ?: player.currentMediaItem?.mediaId).putExtra(EXTRA_COVER, m?.artworkUri?.let { a -> CarArt.coverOf(a)?.let { (id, size) -> nori.library.coverUrl(id, size) } ?: a.toString() })
             .putExtra(EXTRA_POSITION, player.currentPosition).putExtra(EXTRA_AT, android.os.SystemClock.elapsedRealtime())
             .putExtra(EXTRA_SPEED, player.playbackParameters.speed))
     }
@@ -760,7 +766,7 @@ class PlaybackService : MediaLibraryService() {
             // is the core's; each item says how it came.
             val at = index.coerceIn(0, wrappedPlayer.mediaItemCount).toUInt()
             // An undo puts the song back where it was, if the core still has it as the one taken out.
-            val back = mediaItems.singleOrNull()?.takeIf { it.isRestored() }?.let { nori.session.playlistRestore(it.mediaId) }?.takeIf { it.at != null }
+            val back = mediaItems.singleOrNull()?.takeIf { it.isRestored() }?.let { nori.session.playlistRestore(it.key) }?.takeIf { it.at != null }
             val c = back ?: nori.session.playlistTake(at, ids(mediaItems), mediaItems.map { it.queuedAs() ?: Hand.NO })
             super.addMediaItems(c.at?.toInt() ?: at.toInt(), mediaItems)
         }
@@ -866,7 +872,7 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    private fun ids(items: List<MediaItem>): List<String> = items.map { it.mediaId }
+    private fun ids(items: List<MediaItem>): List<ItemKey> = items.keys()
 
     /**
      * A change the core made to its queue on its own (the offline bridge), made to the player the same
@@ -961,7 +967,7 @@ class PlaybackService : MediaLibraryService() {
     private fun persistQueue(push: Boolean) {
         main.removeCallbacks(saveQueue)
         // The queue is the core's (crates/queue/src/playlist.rs); only the place in the song is the player's.
-        val current = player.currentMediaItem?.mediaId
+        val current = player.currentMediaItem?.key
         val position = player.currentPosition.coerceAtLeast(0)
         // Not a child of the service's scope: the save made as the service closes runs after the scope is
         // cancelled, and was lost with it, leaving the queue where it was saved before.
@@ -1037,7 +1043,7 @@ class PlaybackService : MediaLibraryService() {
     private fun pluginMoment() {
         if (!nori.plugins.follows()) return
         val index = player.currentMediaItemIndex.takeIf { it >= 0 && player.mediaItemCount > 0 }?.toUInt()
-        val moment = dev.nori.music.ffi.plugins.Moment(player.isPlaying, index, player.currentMediaItem?.mediaId, player.currentPosition.coerceAtLeast(0).toULong(), nori.outputs.current.value)
+        val moment = dev.nori.music.ffi.plugins.Moment(player.isPlaying, index, player.currentMediaItem?.key, player.currentPosition.coerceAtLeast(0).toULong(), nori.outputs.current.value)
         scope.launch(Dispatchers.IO) { nori.plugins.played(moment) }
     }
 
@@ -1112,7 +1118,8 @@ class PlaybackService : MediaLibraryService() {
                     // The same path as the app's heart: the mark goes up at once (and redraws both hearts),
                     // the request runs on an IO thread inside Library, and a failure puts the mark back.
                     scope.launch {
-                        runCatching { if (!nori.remotes.starWherePlaying(item.mediaId, on)) nori.library.star(StarKind.SONG, item.mediaId, on) }
+                        val key = item.key
+                        runCatching { if (!nori.remotes.starWherePlaying(key, on)) nori.library.star(StarKind.SONG, key.id, on, key.source) }
                             .onFailure { dev.nori.music.NoriLog.w("star from the notification failed: $it") }
                     }
                 }
@@ -1128,7 +1135,7 @@ class PlaybackService : MediaLibraryService() {
                 else -> Player.REPEAT_MODE_OFF
             }
             // Likewise only beside the heart: a station's id has no similar songs.
-            if (command.customAction == CMD_RADIO && ownShown?.buttons?.contains(NoriButton.RADIO) == true) shown.currentMediaItem?.mediaId?.let(::radioFrom)
+            if (command.customAction == CMD_RADIO && ownShown?.buttons?.contains(NoriButton.RADIO) == true) shown.currentMediaItem?.key?.let(::radioFrom)
             // The notification's own extras come with the command; the system's media controls hand them as its args.
             if (command.customAction == CMD_PLUGIN_BUTTON) {
                 val extras = command.customExtras.takeIf { it.containsKey(ARG_PLUGIN) } ?: args
@@ -1296,15 +1303,15 @@ class PlaybackService : MediaLibraryService() {
                 if (player.playbackState == Player.STATE_IDLE) controls.prepare()
             }
             CarTree.CMD_ITEM_FAVOURITE -> songs.first().let { s ->
-                runCatching { nori.library.star(StarKind.SONG, s.id, !nori.library.isStarred(StarKind.SONG, s.id, s.starred)) }
+                runCatching { nori.library.star(StarKind.SONG, s.id, !nori.library.isStarred(StarKind.SONG, s.key, s.starred), s.source) }
             }
             CarTree.CMD_ITEM_DOWNLOAD -> nori.downloads.download(songs)
         }
     }
 
     /** The songs after the one playing become a radio from it (the server's similar songs, as the app's "Start radio"). */
-    private fun radioFrom(id: String) = scope.launch {
-        val songs = runCatching { withContext(Dispatchers.IO) { dev.nori.music.net.lifted { nori.client.radio(id) } } }.getOrNull()?.filter { it.id != id }
+    private fun radioFrom(from: ItemKey) = scope.launch {
+        val songs = runCatching { withContext(Dispatchers.IO) { dev.nori.music.net.lifted { nori.client.radioIn(from.source, from.id) } } }.getOrNull()?.filter { it.key != from }
         if (songs.isNullOrEmpty()) return@launch
         nori.session.playlistShowShuffle(false)
         controls.shuffleModeEnabled = false

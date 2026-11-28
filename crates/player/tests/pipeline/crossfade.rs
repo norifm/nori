@@ -1,5 +1,6 @@
 //! Crossfades end to end: planned boundary, hold, exact mix, equal power, and the seek bar.
 
+use nori_player::key::ItemKey;
 use nori_player::automix::mixer::Mixer;
 use nori_player::playlist::Hand;
 use nori_player::sim::{prefs_off, Player};
@@ -85,10 +86,10 @@ fn play_next_is_planned_at_once() {
     p.play_from(0);
     assert!(p.run_until(10_000, |p| p.app.logged("transition a -> b")), "{:?}", p.app.log);
     p.tracks.push(track("x", &music(SONG_S, 9)));
-    p.queue.live.add(vec!["x".into()], Hand::Next);
+    p.queue.live.add(vec![ItemKey::own("x")], Hand::Next);
     p.queue_changed();
     assert!(p.run_until(12_000, |p| p.app.logged("transition a -> x")), "{:?}", p.app.log);
-    assert!(p.run_until(60_000, |p| p.current_id().as_deref() == Some("x")), "x plays next: {:?}", p.app.log);
+    assert!(p.run_until(60_000, |p| p.current_id().map(|k| k.id).as_deref() == Some("x")), "x plays next: {:?}", p.app.log);
 }
 
 #[test]

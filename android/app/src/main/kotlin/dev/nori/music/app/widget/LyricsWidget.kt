@@ -16,6 +16,7 @@ import dev.nori.music.app.R
 import dev.nori.music.app.widget.Widgets.tint
 import dev.nori.music.ffi.lyrics.LyricsEnd
 import dev.nori.music.ffi.lyrics.LyricsHeard
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.lyrics.LyricsNow
 import dev.nori.music.ffi.lyrics.LyricsPick
 import dev.nori.music.ffi.lyrics.widgetLines
@@ -67,7 +68,7 @@ internal object LyricsLine {
     private val heard by lazy { LyricsHeard() }
 
     /** The song drawn, what its lyrics are, and the lookup running for it. */
-    private var song: String? = null
+    private var song: ItemKey? = null
     private var now: LyricsNow = LyricsNow.NoSong
     private var looking: Job? = null
 
@@ -88,7 +89,7 @@ internal object LyricsLine {
 
     /** The service announced the song or its playing: the words alone while it is the song drawn, else everything. Main thread. */
     fun heard(context: Context) {
-        val drawn = look != null && Widgets.now(context).id == song
+        val drawn = look != null && Widgets.now(context).song == song
         if (!track(context) || !on(context)) return
         if (drawn) line(context) else full(context)
     }
@@ -101,7 +102,7 @@ internal object LyricsLine {
             watching = true
             ContextCompat.registerReceiver(context, screen, IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_SCREEN_OFF) }, ContextCompat.RECEIVER_NOT_EXPORTED)
         }
-        val id = Widgets.now(context).id
+        val id = Widgets.now(context).song
         if (id != song) {
             song = id
             now = if (id == null) LyricsNow.NoSong else LyricsNow.Looking(id)
@@ -113,14 +114,14 @@ internal object LyricsLine {
     }
 
     /** What the core says song [id]'s lyrics are; each change drawn while it is the song drawn. */
-    private fun show(context: Context, id: String, shown: LyricsNow) {
+    private fun show(context: Context, id: ItemKey, shown: LyricsNow) {
         if (song != id) return
         now = shown
         line(context)
     }
 
-    private suspend fun look(context: Context, id: String) {
-        val library = Nori.get(context).library
+    private suspend fun look(context: Context, id: ItemKey) {
+        val nori = Nori.get(context)
         val first = withContext(Dispatchers.IO) { heard.hear(id) }
         // Kept words come at once; a song whose lookup had ended is not looked up again.
         if (first !is LyricsNow.Looking) show(context, id, first)
@@ -128,10 +129,11 @@ internal object LyricsLine {
         if (fetch != null) {
             var failed = false
             try {
-                val s = try { library.song(id) } catch (e: CancellationException) { throw e } catch (e: Exception) { failed = true; null }
+                // The queue's own copy of the song: it says which source it is from.
+                val s = withContext(Dispatchers.IO) { nori.session.queueSongs(listOf(id)).firstOrNull() }.also { if (it == null) failed = true }
                 // Each better answer as it comes, the server's first; a service that never answers is let go.
                 if (s != null) withTimeoutOrNull(30_000) {
-                    library.lyricsFor(s).catch { failed = true }.collect { f ->
+                    nori.library.lyricsFor(s).catch { failed = true }.collect { f ->
                         val pick = LyricsPick(f.lyrics, f.source)
                         if (withContext(Dispatchers.IO) { heard.answer(id, pick) }) show(context, id, LyricsNow.Shown(id, pick))
                     }
@@ -159,7 +161,7 @@ internal object LyricsLine {
         val p = Widgets.now(context)
         val l = (now as? LyricsNow.Shown)?.pick?.lyrics
         val looked = now !is LyricsNow.Looking
-        if (p.id == null) return Words(context.getString(R.string.nothing_playing), "", true, null)
+        if (p.song == null) return Words(context.getString(R.string.nothing_playing), "", true, null)
         val shown = l?.let { widgetLines(it, p.positionNow(), p.speed) }
         if (l == null || shown == null) return Words(if (looked) context.getString(R.string.note_no_lyrics) else NOTE, "", looked, null)
         val said = { i: UInt? -> i?.let { l.lines[it.toInt()].text }.orEmpty() }
@@ -226,7 +228,7 @@ internal object LyricsLine {
             v.setTextViewText(R.id.widget_title, listOfNotNull(p.title, p.artist?.takeIf { it.isNotEmpty() }).joinToString(" · ").ifEmpty { context.getString(R.string.lyrics) })
             v.setTextColor(R.id.widget_title, look[CoverLook.ON_VARIANT])
             val w = write(context, v, look)
-            v.setOnClickPendingIntent(R.id.widget_open, Widgets.open(context, if (p.id == null) null else "lyrics"))
+            v.setOnClickPendingIntent(R.id.widget_open, Widgets.open(context, if (p.song == null) null else "lyrics"))
             manager.updateAppWidget(id, v)
             schedule(context, w)
         }

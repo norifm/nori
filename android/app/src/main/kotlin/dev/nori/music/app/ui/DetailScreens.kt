@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import dev.nori.music.data.key
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.text.withStyle
@@ -72,7 +73,7 @@ private fun FilterField(count: Int, filter: String, onFilter: (String) -> Unit) 
  */
 @Composable
 internal fun SongListPage(
-    title: String, songs: List<Song>, done: Set<String>, from: PageOrigin, actions: ActionsViewModel,
+    title: String, songs: List<Song>, done: Set<dev.nori.music.ffi.model.ItemKey>, from: PageOrigin, actions: ActionsViewModel,
     headLabel: String = if (songs.isEmpty()) "" else say.listCaption(songs.size, songs.sumOf { it.duration.toLong() }),
     pageActions: @Composable RowScope.() -> Unit = {},
     coverUrl: String? = null, coverStandIns: List<String?> = emptyList(),
@@ -106,11 +107,11 @@ internal fun SongListPage(
  */
 @Composable
 internal fun PageActionGlyphs(
-    kind: PageKind, songs: List<Song>, done: Set<String>, actions: ActionsViewModel, artistId: String? = null,
+    kind: PageKind, songs: List<Song>, done: Set<dev.nori.music.ffi.model.ItemKey>, actions: ActionsViewModel, artist: Artist? = null,
     playlistId: String? = null, own: (PageAction) -> (() -> Unit)? = { null },
 ) {
     val downloads = LocalRules.current.downloads
-    val missing = remember(songs, done) { songs.filterNot { it.id in done } }
+    val missing = remember(songs, done) { songs.filterNot { it.key in done } }
     val offered = remember(kind, songs.size, missing.size, downloads) {
         dev.nori.music.ffi.library.pageActions(kind, songs.size.toUInt(), missing.size.toUInt(), downloads)
     }
@@ -119,9 +120,9 @@ internal fun PageActionGlyphs(
             if (a.act == DownloadAct.REMOVE) Iconoir.CheckCircle else Iconoir.Download,
             say.downloadEntry(a.act, missing.size), quiet = true, onClick = downloadAction(a.act, songs, missing, actions, playlistId),
         )
-        PageAction.DownloadEverything -> GlyphButton(Iconoir.Download, say.downloadEverything, quiet = true) { artistId?.let { actions.downloadArtist(it) } }
+        PageAction.DownloadEverything -> GlyphButton(Iconoir.Download, say.downloadEverything, quiet = true) { artist?.let { actions.downloadArtist(it) } }
         PageAction.AddToQueue -> GlyphButton(Iconoir.Playlist, say.addToQueue, quiet = true) {
-            if (artistId != null) actions.queueArtist(artistId) else actions.enqueue(songs)
+            if (artist != null) actions.queueArtist(artist) else actions.enqueue(songs)
         }
         PageAction.Refresh -> own(a)?.let { GlyphButton(Iconoir.Refresh, say.newMix, quiet = true, onClick = it) }
         PageAction.Edit -> own(a)?.let { GlyphButton(Iconoir.EditPencil, say.edit, onClick = it) }
@@ -253,7 +254,8 @@ private fun LoadFailed(message: String) = Text(
 
 @Composable
 fun AlbumScreen(id: String, actions: ActionsViewModel, vm: AlbumViewModel = viewModel()) {
-    LaunchedEffect(id) { vm.open(id) }
+    val source = LocalNav.current.sourceOf("album/${android.net.Uri.encode(id)}")
+    LaunchedEffect(id) { vm.open(id, source) }
     val load by vm.ui.collectAsStateWithLifecycle()
     val hint = LocalNav.current.albumHint(id)
     if (hint == null) {
@@ -297,8 +299,8 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
         queue = queue,
         actions = {
             if (stars) {
-                val albumStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ALBUM, album.id, album.starred)
-                FavoriteButton(albumStarred) { actions.starAlbum(album.id, !albumStarred) }
+                val albumStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ALBUM, album.key, album.starred)
+                FavoriteButton(albumStarred) { actions.starAlbum(album, !albumStarred) }
             }
         },
         headLabel = head,
@@ -327,7 +329,8 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
 
 @Composable
 fun ArtistScreen(id: String, actions: ActionsViewModel, vm: ArtistViewModel = viewModel()) {
-    LaunchedEffect(id) { vm.open(id) }
+    val source = LocalNav.current.sourceOf("artist/${android.net.Uri.encode(id)}")
+    LaunchedEffect(id) { vm.open(id, source) }
     val load by vm.ui.collectAsStateWithLifecycle()
     val uri = LocalUriHandler.current
     var leaving by remember { mutableStateOf<String?>(null) }
@@ -347,7 +350,8 @@ fun ArtistScreen(id: String, actions: ActionsViewModel, vm: ArtistViewModel = vi
 /** One shelf of an artist's page in full ("see all"): its releases as a grid, the size of a home row's. */
 @Composable
 fun ArtistReleasesScreen(id: String, group: Int, vm: ArtistViewModel = viewModel()) {
-    LaunchedEffect(id) { vm.open(id) }
+    val source = LocalNav.current.sourceOf("artist/${android.net.Uri.encode(id)}")
+    LaunchedEffect(id) { vm.open(id, source) }
     val load by vm.ui.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     LoadBox(load) { ready ->
@@ -355,7 +359,7 @@ fun ArtistReleasesScreen(id: String, group: Int, vm: ArtistViewModel = viewModel
         Column {
             LargeTitle(title)
             PrintGrid(onEnd = {}) {
-                gridItems(albums, key = { it.id }, contentType = { "album" }) { a ->
+                gridItems(albums, key = { it.rowKey }, contentType = { "album" }) { a ->
                     AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
                 }
             }
@@ -379,7 +383,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         val albums = ui?.detail?.albums
         if (albums != null) listOfNotNull(
             say.releases(albums.size).takeIf { albums.isNotEmpty() },
-            albums.sumOf { it.songCount.toInt() }.takeIf { it > 0 }?.let(say::songs),
+            ui.detail.releaseSongs?.toInt()?.takeIf { it > 0 }?.let(say::songs),
         ).joinToString(" · ").ifEmpty { ui.detail.songs.size.takeIf { it > 0 }?.let(say::songs).orEmpty() }
         else artist.albumCount?.takeIf { it > 0u }?.let { say.releases(it.toInt()) }.orEmpty()
     }
@@ -391,19 +395,19 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         onLongPress = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(artist)) },
         title = artist.name,
         titleSize = 32.sp,
-        onPlay = ui?.let { ready -> { actions.playArtist(ready.detail.artist.id) } },
-        onShuffle = ui?.let { ready -> { actions.playArtist(ready.detail.artist.id, shuffle = true) } },
+        onPlay = ui?.let { ready -> { actions.playArtist(ready.detail.artist) } },
+        onShuffle = ui?.let { ready -> { actions.playArtist(ready.detail.artist, shuffle = true) } },
         awaitingPlay = ui == null && failed == null,
         // Only a queue this page's Play or Shuffle started (all the artist's songs), not any song by them.
         queue = rememberPageQueue(rememberOrigin(OriginKind.ARTIST, artist.id), ui?.detail?.queue),
         actions = {
             if (stars) {
-                val artistStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ARTIST, artist.id, artist.starred)
-                FavoriteButton(artistStarred) { actions.starArtist(artist.id, !artistStarred) }
+                val artistStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ARTIST, artist.key, artist.starred)
+                FavoriteButton(artistStarred) { actions.starArtist(artist, !artistStarred) }
             }
         },
         headLabel = head,
-        headActions = { if (ui != null) PageActionGlyphs(PageKind.Artist, emptyList(), list.downloaded, actions, artistId = artist.id) },
+        headActions = { if (ui != null) PageActionGlyphs(PageKind.Artist, emptyList(), list.downloaded, actions, artist = artist) },
     ) {
         when {
             ui != null -> {
@@ -421,7 +425,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                         Column(late(arrival)) {
                             SectionTitle(group, onMore = { nav.artistReleases(artist.id, n) })
                             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, itemMotion()) }
+                                items(albums, key = { it.rowKey }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, itemMotion()) }
                             }
                         }
                     }
@@ -451,7 +455,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                     Column(late(arrival)) {
                         SectionTitle(say.similarArtists)
                         LazyRow(Modifier.bleedsToEdges(), rememberShelfState(similar.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(similar, key = { it.id }) { a ->
+                            items(similar, key = { it.rowKey }) { a ->
                                 val cardMenu = LocalCardMenu.current
                                 Text(a.name, itemMotion().combinedClickable(onClick = { nav.artist(a.id, a) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) }).padding(8.dp))
                             }
@@ -467,7 +471,8 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
 
 @Composable
 fun PlaylistScreen(id: String, actions: ActionsViewModel, vm: PlaylistViewModel = viewModel()) {
-    LaunchedEffect(id) { vm.open(id) }
+    val at = LocalNav.current.playlistAt("playlist/${android.net.Uri.encode(id)}")
+    LaunchedEffect(id) { vm.open(id, at) }
     val load by vm.ui.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf("") }
     val detail = (load as? Load.Ready)?.data

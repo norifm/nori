@@ -2,6 +2,7 @@
 //! ([`Fake`]), bit-perfect output, a live stream with ICY titles, the offline bridge, and repeat-one
 //! loops. Compressed songs come from ffmpeg; tests needing it pass trivially without it.
 
+use nori_player::key::ItemKey;
 use crate::common;
 
 use std::collections::VecDeque;
@@ -115,15 +116,17 @@ impl ByteSource for Server {
 struct Songs(Arc<Server>, Vec<(String, String, i64)>, Vec<(String, String, i32)>);
 
 impl Library for Songs {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let (_, hint, ms) = self.1.iter().find(|(i, _, _)| i == id).cloned().ok_or("no such song")?;
         Ok(Located { source: Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some(hint), duration_ms: Some(ms), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
         let ms = self.1.iter().find(|(i, _, _)| i == id).map_or(0, |s| s.2);
         let (album_id, track) = self.2.iter().find(|(i, _, _)| i == id).map_or((None, 0), |a| (Some(a.1.clone()), a.2));
-        WindowSong { id: id.into(), title: id.into(), duration_ms: ms, album_id, disc: 1, track, ..Default::default() }
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: ms, album_id: album_id.map(ItemKey::own), disc: 1, track, ..Default::default() }
     }
 }
 
@@ -694,7 +697,7 @@ fn an_untold_edit_leaves_the_known_list() {
     let rig = Rig::new(server, songs, app(), None, Settings::default());
     rig.engine.play_at(1, 0);
     assert!(rig.wait(5, |r| r.heard_song("b")), "{:?}", rig.events.lock());
-    rig.queue.0.lock().set(vec!["x".into()], Some(0), false, 0);
+    rig.queue.0.lock().set(vec![ItemKey::own("x")], Some(0), false, 0);
     assert!(rig.wait(5, |r| r.heard_song("c")), "{:?}", rig.events.lock());
     rig.engine.queue_changed();
     rig.engine.play_at(0, 0);
@@ -721,7 +724,7 @@ impl Rig {
     /// [`Rig::new`] with album memberships (id, album, track).
     fn albums(server: Arc<Server>, songs: Vec<(String, String, i64)>, albums: Vec<(String, String, i32)>, app: impl App + Send + 'static, fake: Option<Fake>, settings: Settings) -> Rig {
         let queue = SharedQueue::default();
-        queue.0.lock().set(songs.iter().map(|s| s.0.clone()).collect(), Some(0), false, 0);
+        queue.0.lock().set(songs.iter().map(|s| s.0.clone()).map(ItemKey::own).collect(), Some(0), false, 0);
         let card = Card::new();
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = events.clone();
@@ -752,7 +755,7 @@ impl Rig {
     }
 
     fn heard_song(&self, id: &str) -> bool {
-        self.events.lock().iter().any(|e| matches!(e, Event::Song { id: i, .. } if i == id))
+        self.events.lock().iter().any(|e| matches!(e, Event::Song { id: i, .. } if i.id == id))
     }
 }
 
@@ -777,14 +780,17 @@ impl Logged {
 }
 
 impl Host for Logged {
-    fn plan_for(&mut self, id: &str) -> Option<Plan> {
-        self.0.lock().plan_for(id)
+    fn plan_for(&mut self, id_key: &ItemKey) -> Option<Plan> {
+        let id = id_key.id.as_str();
+        self.0.lock().plan_for(&ItemKey::own(id))
     }
-    fn wants_analysis(&mut self, id: &str) -> Option<u64> {
-        self.0.lock().wants_analysis(id)
+    fn wants_analysis(&mut self, id_key: &ItemKey) -> Option<u64> {
+        let id = id_key.id.as_str();
+        self.0.lock().wants_analysis(&ItemKey::own(id))
     }
-    fn analysed(&mut self, id: &str, a: Analyzer, channels: usize, frames: u64, rate: u32) {
-        self.0.lock().analysed(id, a, channels, frames, rate)
+    fn analysed(&mut self, id_key: &ItemKey, a: Analyzer, channels: usize, frames: u64, rate: u32) {
+        let id = id_key.id.as_str();
+        self.0.lock().analysed(&ItemKey::own(id), a, channels, frames, rate)
     }
     fn log(&mut self, message: &str) {
         self.0.lock().log(message)
@@ -801,10 +807,10 @@ impl App for Logged {
     fn auto_mix(&self) -> bool {
         self.0.lock().auto_mix()
     }
-    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[ItemKey], shuffling: bool) {
         self.0.lock().window(songs, ids, shuffling)
     }
-    fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, songs: &mut S, ids: &[String]) {
+    fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, songs: &mut S, ids: &[ItemKey]) {
         self.0.lock().measure_ahead(songs, ids)
     }
     fn transitions_off(&mut self, off: bool) {
@@ -1160,7 +1166,7 @@ fn offload_follows_queue_edits() {
     rig.run(100);
     // A song put before them: what is written stays.
     let opened = opens(&fake);
-    rig.queue.0.lock().insert(0, vec!["x".into()], nori_player::playlist::Hand::No);
+    rig.queue.0.lock().insert(0, vec![ItemKey::own("x")], nori_player::playlist::Hand::No);
     rig.engine.queue_changed();
     rig.run(100);
     assert_eq!(opens(&fake), opened, "no track opened again: {:?}", fake.calls());
@@ -1173,7 +1179,7 @@ fn offload_follows_queue_edits() {
         fake.advance(5 * 44_100);
         rig.run(100);
     }
-    let songs: Vec<String> = rig.events.lock().iter().filter_map(|e| if let Event::Song { id, .. } = e { Some(id.clone()) } else { None }).collect();
+    let songs: Vec<String> = rig.events.lock().iter().filter_map(|e| if let Event::Song { id, .. } = e { Some(id.id.clone()) } else { None }).collect();
     assert!(!songs.contains(&"b".to_string()) && songs.contains(&"c".to_string()), "b went, c followed a: {songs:?}");
     rig.engine.stop();
 }
@@ -1217,7 +1223,7 @@ fn offload_sleep_timer() {
     assert!(rig.wait(10, |_| fake.written() == 20 * 44_100), "both written: {}", fake.written());
     rig.engine.pause_at_end(true);
     assert!(rig.wait(5, |_| after_last_open(&fake.calls()).contains(&&Call::EndOfStream)), "a alone: {:?}", fake.calls());
-    rig.queue.0.lock().insert(0, vec!["b".into()], nori_player::playlist::Hand::No);
+    rig.queue.0.lock().insert(0, vec![ItemKey::own("b")], nori_player::playlist::Hand::No);
     rig.engine.queue_changed();
     rig.run(100);
     let written = fake.written();
@@ -1243,7 +1249,7 @@ fn offload_heard_song_taken_out() {
     rig.queue.0.lock().remove(1, 2);
     rig.engine.queue_changed();
     // The song now in its place plays, from its start.
-    assert!(rig.wait(5, |r| r.engine.status().index == Some(0) && r.engine.status().id.as_deref() == Some("a")), "{:?}", rig.engine.status());
+    assert!(rig.wait(5, |r| r.engine.status().index == Some(0) && r.engine.status().id.map(|k| k.id).as_deref() == Some("a")), "{:?}", rig.engine.status());
     assert!(!rig.events.lock().iter().any(|e| matches!(e, Event::Stopped { .. } | Event::Error { .. })), "{:?}", rig.events.lock());
     rig.engine.stop();
 }
@@ -1397,19 +1403,21 @@ impl ByteSource for Station {
 struct Radio;
 
 impl Library for Radio {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         Ok(Located { source: Source::Live { url: id.into(), bytes: Arc::new(Station) }, hint: Some("wav".into()), duration_ms: None, estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
-        WindowSong { id: id.into(), title: id.into(), radio: true, ..Default::default() }
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
+        WindowSong { id: ItemKey::own(id), title: id.into(), radio: true, ..Default::default() }
     }
 }
 
 #[test]
 fn stream_titles() {
     let queue = SharedQueue::default();
-    queue.0.lock().set(vec!["radio:1".into()], Some(0), false, 0);
+    queue.0.lock().set(vec![ItemKey::own("radio:1")], Some(0), false, 0);
     let card = Card::new();
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = events.clone();
@@ -1447,14 +1455,17 @@ fn stream_titles() {
 struct Bridging(sim::App);
 
 impl Host for Bridging {
-    fn plan_for(&mut self, id: &str) -> Option<Plan> {
-        self.0.plan_for(id)
+    fn plan_for(&mut self, id_key: &ItemKey) -> Option<Plan> {
+        let id = id_key.id.as_str();
+        self.0.plan_for(&ItemKey::own(id))
     }
-    fn wants_analysis(&mut self, id: &str) -> Option<u64> {
-        self.0.wants_analysis(id)
+    fn wants_analysis(&mut self, id_key: &ItemKey) -> Option<u64> {
+        let id = id_key.id.as_str();
+        self.0.wants_analysis(&ItemKey::own(id))
     }
-    fn analysed(&mut self, id: &str, a: Analyzer, channels: usize, frames: u64, rate: u32) {
-        self.0.analysed(id, a, channels, frames, rate)
+    fn analysed(&mut self, id_key: &ItemKey, a: Analyzer, channels: usize, frames: u64, rate: u32) {
+        let id = id_key.id.as_str();
+        self.0.analysed(&ItemKey::own(id), a, channels, frames, rate)
     }
     fn now_ms(&self) -> i64 {
         self.0.now_ms()
@@ -1468,10 +1479,10 @@ impl App for Bridging {
     fn auto_mix(&self) -> bool {
         false
     }
-    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[ItemKey], shuffling: bool) {
         self.0.window(songs, ids, shuffling)
     }
-    fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _: &mut S, _: &[String]) {}
+    fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _: &mut S, _: &[ItemKey]) {}
     fn on_error(&mut self, kind: PlaybackError, _: bool) -> Option<OnError> {
         Some(if kind == PlaybackError::Network { OnError::Bridge } else { OnError::Skip })
     }
@@ -1491,7 +1502,7 @@ fn unplayable_songs() {
     assert!(!events.iter().any(|e| matches!(e, Event::Stopped { .. })), "the bridge takes over: not a stop: {events:?}");
     assert!(rig.wait(5, |r| r.engine.status().state == State::Paused));
     // The bridge's jump plays at once.
-    rig.queue.0.lock().set(vec!["a".into(), "b".into(), "a".into()], Some(1), false, 0);
+    rig.queue.0.lock().set(vec![ItemKey::own("a"), ItemKey::own("b"), ItemKey::own("a")], Some(1), false, 0);
     rig.engine.queue_changed();
     rig.engine.play_at(2, 0);
     assert!(rig.wait(5, |r| r.engine.status().state == State::Playing));
@@ -1508,7 +1519,7 @@ fn unplayable_songs() {
     assert!(rig.wait(30, |r| r.heard_song("c")), "c after b is skipped: {:?}", rig.events.lock());
     let events = rig.events.lock().clone();
     assert!(!events.iter().any(|e| matches!(e, Event::Bridge { .. })), "not the bridge's: {events:?}");
-    assert!(events.iter().any(|e| matches!(e, Event::Error { id, message } if id == "b" && message.contains("404"))), "b failed with the server's answer: {events:?}");
+    assert!(events.iter().any(|e| matches!(e, Event::Error { id, message } if id.as_ref().is_some_and(|k| k.id == "b") && message.contains("404"))), "b failed with the server's answer: {events:?}");
     rig.engine.stop();
 }
 
@@ -2165,15 +2176,18 @@ impl Watched {
 }
 
 impl Host for Watched {
-    fn plan_for(&mut self, id: &str) -> Option<Plan> {
+    fn plan_for(&mut self, id_key: &ItemKey) -> Option<Plan> {
+        let id = id_key.id.as_str();
         let skip = *self.1.lock();
-        self.0.lock().plan_for(id).map(|p| if skip > 0 { Plan { mixer: TransitionPlan { in_start_ms: skip / 1000, ..p.mixer }, ..p } } else { p })
+        self.0.lock().plan_for(&ItemKey::own(id)).map(|p| if skip > 0 { Plan { mixer: TransitionPlan { in_start_ms: skip / 1000, ..p.mixer }, ..p } } else { p })
     }
-    fn wants_analysis(&mut self, id: &str) -> Option<u64> {
-        self.0.lock().wants_analysis(id)
+    fn wants_analysis(&mut self, id_key: &ItemKey) -> Option<u64> {
+        let id = id_key.id.as_str();
+        self.0.lock().wants_analysis(&ItemKey::own(id))
     }
-    fn analysed(&mut self, id: &str, a: Analyzer, channels: usize, frames: u64, rate: u32) {
-        self.0.lock().analysed(id, a, channels, frames, rate)
+    fn analysed(&mut self, id_key: &ItemKey, a: Analyzer, channels: usize, frames: u64, rate: u32) {
+        let id = id_key.id.as_str();
+        self.0.lock().analysed(&ItemKey::own(id), a, channels, frames, rate)
     }
     fn log(&mut self, message: &str) {
         self.0.lock().log(message)
@@ -2190,10 +2204,10 @@ impl App for Watched {
     fn auto_mix(&self) -> bool {
         false
     }
-    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[ItemKey], shuffling: bool) {
         self.0.lock().window(songs, ids, shuffling)
     }
-    fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _: &mut S, _: &[String]) {}
+    fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _: &mut S, _: &[ItemKey]) {}
 }
 
 fn automix() -> Settings {
@@ -2501,14 +2515,16 @@ impl ByteSource for Unsized {
 struct UnsizedSongs(Arc<Unsized>, Vec<(String, String, i64)>);
 
 impl Library for UnsizedSongs {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let (_, hint, ms) = self.1.iter().find(|(i, _, _)| i == id).cloned().ok_or("no such song")?;
         Ok(Located { source: Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some(hint), duration_ms: Some(ms), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
         let ms = self.1.iter().find(|(i, _, _)| i == id).map_or(0, |s| s.2);
-        WindowSong { id: id.into(), title: id.into(), duration_ms: ms, ..Default::default() }
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: ms, ..Default::default() }
     }
 }
 
@@ -2523,7 +2539,7 @@ fn unsized_rig(d: &Path, secs: u32, fake: Option<Fake>, settings: Settings) -> O
     let server = Arc::new(Unsized { files: vec![("a".into(), Arc::new(a)), ("b".into(), Arc::new(b))], hold, gate: gate.clone() });
     let songs = vec![("a".to_string(), "mp3".to_string(), secs as i64 * 1000), ("b".to_string(), "mp3".to_string(), secs as i64 * 1000)];
     let queue = SharedQueue::default();
-    queue.0.lock().set(songs.iter().map(|s| s.0.clone()).collect(), Some(0), false, 0);
+    queue.0.lock().set(songs.iter().map(|s| s.0.clone()).map(ItemKey::own).collect(), Some(0), false, 0);
     let card = Card::new();
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = events.clone();
@@ -3023,19 +3039,19 @@ fn new_queue_around_current() {
     // The equalizer on, as where it was seen.
     let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let rig = Rig::new(server, songs, app(), None, Settings { sound: eq, ..Settings::default() });
-    rig.queue.0.lock().set(vec!["p1".into(), "a".into(), "p2".into()], Some(1), false, 0);
+    rig.queue.0.lock().set(vec![ItemKey::own("p1"), ItemKey::own("a"), ItemKey::own("p2")], Some(1), false, 0);
     rig.engine.queue_changed();
     rig.engine.play_at(1, 0);
     assert!(rig.wait(10, |r| r.heard_song("a")), "{:?}", rig.events.lock());
     // 1 s in: a's rest and p2's start are buffered.
     rig.run(1_000);
     let before = rig.events.lock().len();
-    rig.queue.0.lock().set(vec!["c".into(), "a".into(), "d".into()], Some(1), false, 0);
+    rig.queue.0.lock().set(vec![ItemKey::own("c"), ItemKey::own("a"), ItemKey::own("d")], Some(1), false, 0);
     rig.engine.queue_changed();
     assert!(rig.wait(10, |r| r.heard_song("d")), "d follows a: {:?}", rig.events.lock());
     let after: Vec<Event> = rig.events.lock()[before..].to_vec();
     assert!(!after.iter().any(|e| matches!(e, Event::Stopped { .. } | Event::State(State::Paused | State::Ended | State::Idle))), "{after:?}");
-    assert!(!after.iter().any(|e| matches!(e, Event::Song { id, .. } if id == "p2")), "the old queue's next song is not heard: {after:?}");
+    assert!(!after.iter().any(|e| matches!(e, Event::Song { id, .. } if id.id == "p2")), "the old queue's next song is not heard: {after:?}");
     rig.engine.stop();
 
     // [`new_queue_around_current_song_plays_on`], the old next song failing in read-ahead: stops nothing.
@@ -3047,13 +3063,13 @@ fn new_queue_around_current() {
     let songs = ["p1", "a", "p2", "c", "d"].iter().map(|id| (id.to_string(), "wav".to_string(), 3_000)).collect();
     let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let rig = Rig::new(server, songs, app(), None, Settings { sound: eq, ..Settings::default() });
-    rig.queue.0.lock().set(vec!["p1".into(), "a".into(), "p2".into()], Some(1), false, 0);
+    rig.queue.0.lock().set(vec![ItemKey::own("p1"), ItemKey::own("a"), ItemKey::own("p2")], Some(1), false, 0);
     rig.engine.queue_changed();
     rig.engine.play_at(1, 0);
     assert!(rig.wait(10, |r| r.heard_song("a")), "{:?}", rig.events.lock());
     rig.run(1_000);
     let before = rig.events.lock().len();
-    rig.queue.0.lock().set(vec!["c".into(), "a".into(), "d".into()], Some(1), false, 0);
+    rig.queue.0.lock().set(vec![ItemKey::own("c"), ItemKey::own("a"), ItemKey::own("d")], Some(1), false, 0);
     rig.engine.queue_changed();
     assert!(rig.wait(10, |r| r.heard_song("d")), "d follows a: {:?}", rig.events.lock());
     let after: Vec<Event> = rig.events.lock()[before..].to_vec();

@@ -2,6 +2,7 @@
 //! player's own report). Asked every frame, so answers are packed into an `i64` and nothing allocates.
 
 use crate::Session;
+use nori_model::ItemKey;
 use nori_player::engine::Heard;
 use nori_player::heard::{HeardTracker, PlayerNow, Playhead, Seen};
 
@@ -47,13 +48,13 @@ impl HeardAt {
 /// `heard` indexes the core's `queue`; `page` is what the page lists, which may trail the core's queue,
 /// so the nearest copy of the heard song there is taken (the earlier on a tie). None when there is no
 /// heard row, the page lacks the song, or it is the `playing` song.
-pub fn shown_row<Q: AsRef<str>, P: AsRef<str>>(heard: Option<usize>, queue: &[Q], page: &[P], playing: Option<&str>) -> Option<usize> {
+pub fn shown_row<K: PartialEq>(heard: Option<usize>, queue: &[K], page: &[K], playing: Option<&K>) -> Option<usize> {
     let at = heard?;
-    let id = queue.get(at)?.as_ref();
-    let row = if page.get(at).is_some_and(|p| p.as_ref() == id) {
+    let id = queue.get(at)?;
+    let row = if page.get(at) == Some(id) {
         at
     } else {
-        page.iter().enumerate().filter(|(_, p)| p.as_ref() == id).min_by_key(|(i, _)| i.abs_diff(at))?.0
+        page.iter().enumerate().filter(|(_, p)| *p == id).min_by_key(|(i, _)| i.abs_diff(at))?.0
     };
     (Some(id) != playing).then_some(row)
 }
@@ -61,8 +62,8 @@ pub fn shown_row<Q: AsRef<str>, P: AsRef<str>>(heard: Option<usize>, queue: &[Q]
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Session {
     /// [`shown_row`] over the core's queue.
-    pub fn heard_shown_row(&self, heard: Option<u32>, page: Vec<String>, playing: Option<String>) -> Option<u32> {
-        self.playlist(|p| shown_row(heard.map(|h| h as usize), p.ids(), &page, playing.as_deref())).map(|r| r as u32)
+    pub fn heard_shown_row(&self, heard: Option<u32>, page: Vec<ItemKey>, playing: Option<ItemKey>) -> Option<u32> {
+        self.playlist(|p| shown_row(heard.map(|h| h as usize), p.ids(), &page, playing.as_ref())).map(|r| r as u32)
     }
 }
 
@@ -145,7 +146,18 @@ mod tests {
             ("a tie: the earlier", Some(2), &["b", "a", "b"], &["b", "a", "c", "a", "b"], None, Some(0)),
         ];
         for (what, heard, queue, page, playing, want) in cases {
-            assert_eq!(shown_row(heard, queue, page, playing), want, "{what}");
+            assert_eq!(shown_row(heard, queue, page, playing.as_ref()), want, "{what}");
         }
+    }
+
+    /// One id in two sources: only the entry heard is its row, whichever of the two plays.
+    #[test]
+    fn one_id_in_two_sources_lights_its_own_row() {
+        use nori_model::ItemKey;
+        let (own, theirs) = (ItemKey::own("1"), ItemKey { source: Some("nd2".into()), id: "1".into() });
+        let queue = [own.clone(), theirs.clone()];
+        assert_eq!(shown_row(Some(1), &queue, &queue, Some(&own)), Some(1), "theirs heard while the player is on its own");
+        assert_eq!(shown_row(Some(1), &queue, &queue, Some(&theirs)), None, "the player's own row");
+        assert_eq!(shown_row(Some(0), &queue, &[theirs.clone(), own.clone()], Some(&theirs)), Some(1), "the page's row of the one heard");
     }
 }

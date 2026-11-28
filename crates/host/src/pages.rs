@@ -4,7 +4,7 @@
 
 use nori_core::browse::{favorites_in_order, home_pinned, home_row_more, home_row_page, home_shelves, shelf_albums_read, AlbumSort, HomeShelf};
 pub use nori_core::home::ShelfItems;
-use nori_core::home::{shelf_items, shelf_read};
+use nori_core::home::{home_woven, shelf_items, shelf_read, HomePlace};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::browse::{Decade, GenreTile, HistoryAfter, HistoryPage, ServerHistory, StatsPage, StatsPeriod, StatsSource};
 use nori_core::library::{DownloadedLibrary, QueueOffer};
@@ -15,7 +15,10 @@ use nori_core::sketch::Reading;
 use nori_core::transport::{block_on, NetError};
 use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, CoreError, FeedShelf, Playlist, PlaylistDetail, Song, Starred};
 
-use crate::session::{read_pages, Handle};
+use crate::session::{read_pages_in, Handle};
+
+/// A read handing each page it gets to the function it is given.
+pub type PageReader<'a> = dyn FnMut(&mut dyn FnMut(Page)) -> Result<(), NetError> + 'a;
 
 /// A page a client reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,13 +50,15 @@ pub enum PageAsk {
     Stats { period: StatsPeriod, source: StatsSource, sync: bool },
     /// What is downloaded, and what is on its way.
     Downloads,
-    Album(String),
+    /// An album or artist by id, in the source it comes from (its `source`).
+    Album(String, Option<String>),
     DownloadedAlbum(String),
-    Artist(String),
+    Artist(String, Option<String>),
     /// An artist page's about part (`pages::ArtistAbout`), read after its page: a provider answers both
     /// from one read of the artist.
-    ArtistAbout(String),
-    Playlist(String),
+    ArtistAbout(String, Option<String>),
+    /// A playlist by id, where it is kept.
+    Playlist(String, crate::PlaylistAt),
     Mix(String),
     /// A Home row in full ("see all"): its page from `offset` (`browse::home_row_page`).
     HomeRow { row: HomeRow, offset: u32 },
@@ -70,9 +75,9 @@ impl PageAsk {
             PageAsk::Playlists => Reading::Playlists,
             PageAsk::Favorites => Reading::Favorites,
             PageAsk::Genres => Reading::Genres,
-            PageAsk::Album(_) | PageAsk::DownloadedAlbum(_) => Reading::Album,
-            PageAsk::Artist(_) => Reading::Artist,
-            PageAsk::Playlist(_) => Reading::Playlist,
+            PageAsk::Album(..) | PageAsk::DownloadedAlbum(_) => Reading::Album,
+            PageAsk::Artist(..) => Reading::Artist,
+            PageAsk::Playlist(..) => Reading::Playlist,
             PageAsk::Mix(_) => Reading::Mix,
             _ => return None,
         })
@@ -137,6 +142,9 @@ pub enum HomePart {
     Feed(Vec<FeedShelf>),
     /// Shelf `at` of the rows asked for, with what it holds; a shelf with nothing in it comes too.
     Shelf { at: usize, items: ShelfItems },
+    /// The order the rows' shelves and the feed's show in ([`nori_core::home::home_woven`]): sent once
+    /// what is kept came, and again when a source's answer changed it.
+    Places(Vec<HomePlace>),
 }
 
 impl Handle {
@@ -144,13 +152,13 @@ impl Handle {
     /// (`Client::queue_offer`); none when it cannot be asked. Blocks.
     pub fn queue_offer(&self) -> Option<QueueOffer> {
         let now = self.now();
-        block_on(self.client.queue_offer(now.playing, now.song.map(|s| s.id))).ok().flatten()
+        block_on(self.client.queue_offer(now.playing, now.song.as_ref().map(nori_core::Keyed::key))).ok().flatten()
     }
 
     /// [`Handle::queue_offer`] as the server last answered, at once: shown before it is asked again.
     pub fn queue_offer_kept(&self) -> Option<QueueOffer> {
         let now = self.now();
-        self.client.queue_offer_kept(now.playing, now.song.map(|s| s.id)).ok().flatten()
+        self.client.queue_offer_kept(now.playing, now.song.as_ref().map(nori_core::Keyed::key)).ok().flatten()
     }
 
     /// The queue Home offered (`offer::Offered::close`) was taken up (`take`: it plays from its song and
@@ -171,9 +179,10 @@ impl Handle {
     }
 
     fn page(&self, ask: PageAsk, each: &dyn Fn(Result<PageGot, PageFailed>)) {
-        let pages = |read: Read, make: &dyn Fn(Page) -> Option<PageGot>| {
+        // Reads with `read`, each page `make` takes coming as it comes; nothing at all is a failure too.
+        let reading = |read: &mut PageReader<'_>, make: &dyn Fn(Page) -> Option<PageGot>| {
             let mut any = false;
-            let r = read_pages(&self.client, read, |p| {
+            let r = read(&mut |p| {
                 if let Some(got) = make(p) {
                     any = true;
                     each(Ok(got));
@@ -185,6 +194,8 @@ impl Handle {
                 Err(e) => each(Err(PageFailed::Net(e))),
             }
         };
+        let pages_in = |source: Option<String>, read: Read, make: &dyn Fn(Page) -> Option<PageGot>| reading(&mut |got| read_pages_in(&self.client, source.clone(), read.clone(), got), make);
+        let pages = |read: Read, make: &dyn Fn(Page) -> Option<PageGot>| pages_in(None, read, make);
         match ask {
             PageAsk::Albums { sort, favorites: true, .. } => {
                 pages(Read::StarredItems, &|p| if let Page::StarredPage { v } = p { Some(PageGot::Albums(favorites_in_order(v.albums, sort, false))) } else { None });
@@ -196,10 +207,17 @@ impl Handle {
             PageAsk::Artists => pages(Read::ArtistIndex, &|p| if let Page::Artists { v } = p { Some(PageGot::Artists(v)) } else { None }),
             PageAsk::Favorites => pages(Read::StarredItems, &|p| if let Page::StarredPage { v } = p { Some(PageGot::Favorites(Box::new(v))) } else { None }),
             PageAsk::Playlists => pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(PageGot::Playlists(v)) } else { None }),
-            PageAsk::Album(id) => pages(Read::AlbumById { id }, &|p| if let Page::AlbumPage { v } = p { Some(PageGot::Album(Box::new(v))) } else { None }),
-            PageAsk::Artist(id) => pages(Read::ArtistById { id }, &|p| if let Page::ArtistPage { v } = p { Some(PageGot::Artist(Box::new(v))) } else { None }),
-            PageAsk::ArtistAbout(id) => pages(Read::ArtistAbout { id }, &|p| if let Page::About { v } = p { Some(PageGot::ArtistAbout(Box::new(nori_core::pages::ArtistAbout::of(v)))) } else { None }),
-            PageAsk::Playlist(id) => pages(Read::PlaylistById { id }, &|p| if let Page::PlaylistPage { v } = p { Some(PageGot::Playlist(Box::new(v))) } else { None }),
+            PageAsk::Album(id, source) => pages_in(source, Read::AlbumById { id }, &|p| if let Page::AlbumPage { v } = p { Some(PageGot::Album(Box::new(v))) } else { None }),
+            // One artist across the profile's sources.
+            PageAsk::Artist(id, source) => reading(
+                &mut |got| block_on(self.client.clone().read_each_artist(source.clone(), id.clone(), got)),
+                &|p| if let Page::ArtistPage { v } = p { Some(PageGot::Artist(Box::new(v))) } else { None },
+            ),
+            PageAsk::ArtistAbout(id, source) => pages_in(source, Read::ArtistAbout { id }, &|p| if let Page::About { v } = p { Some(PageGot::ArtistAbout(Box::new(nori_core::pages::ArtistAbout::of(v)))) } else { None }),
+            PageAsk::Playlist(id, at) => reading(
+                &mut |got| block_on(self.client.clone().read_each_playlist(id.clone(), at.clone(), got)),
+                &|p| if let Page::PlaylistPage { v } = p { Some(PageGot::Playlist(Box::new(v))) } else { None },
+            ),
             PageAsk::DownloadedAlbum(id) => each(match self.core.downloaded_album(id) {
                 Ok(Some(a)) => Ok(PageGot::Album(Box::new(a))),
                 Ok(None) => Err(PageFailed::NotDownloaded),
@@ -294,6 +312,9 @@ impl Handle {
                 each(Ok(HomePart::Shelf { at, items: items.clone() }));
             }
         }
+        each(Ok(HomePart::Places(kept.places.clone())));
+        let (mut feed, mut shelves) = (kept.feed.clone().unwrap_or_default(), kept.shelves.clone());
+        let woven = |feed: &[FeedShelf], shelves: &[Option<ShelfItems>]| each(Ok(HomePart::Places(home_woven(shelves, feed))));
         let mut any = mixes || kept.feed.is_some() || kept.shelves.iter().any(Option::is_some);
         let mut answered = |r: Result<(), NetError>| match r {
             Ok(()) => {
@@ -306,22 +327,25 @@ impl Handle {
             }
             Err(_) => true,
         };
-        if self.rules().feed {
-            let r = block_on(client.read_refreshed(Read::HomeFeed)).map(|page| {
-                if let Some(Page::Feed { v }) = page {
-                    each(Ok(HomePart::Feed(v)));
-                }
-            });
-            if !answered(r) {
-                return;
+        let r = block_on(client.clone().home_feed_refreshed()).map(|fresh| {
+            if let Some(v) = fresh {
+                each(Ok(HomePart::Feed(v.clone())));
+                feed = v;
+                woven(&feed, &shelves);
             }
+        });
+        if !answered(r) {
+            return;
         }
         let pins = self.core.session.settings.prefs(|p| p.pinned_playlists.clone());
-        let rows = if self.rules().feed { Vec::new() } else { rows };
+        let rows = if client.library_home() { rows } else { Vec::new() };
         for (at, shelf) in home_shelves(rows).iter().enumerate() {
             let Some(read) = shelf_read(shelf) else { continue };
             let r = block_on(client.read_refreshed(read)).map(|page| match page.and_then(|p| shelf_items(shelf, p, &pins)) {
-                Some(items) => each(Ok(HomePart::Shelf { at, items })),
+                Some(items) => {
+                    each(Ok(HomePart::Shelf { at, items: items.clone() }));
+                    shelves[at] = Some(items);
+                }
                 None if kept.shelves.get(at).is_none_or(Option::is_none) => each(Ok(HomePart::Shelf { at, items: ShelfItems::Albums { v: Vec::new() } })),
                 None => {}
             });
@@ -329,7 +353,8 @@ impl Handle {
                 return;
             }
         }
-        if mixes && self.rules().mixes {
+        woven(&feed, &shelves);
+        if mixes && client.mixes_anywhere() {
             match client.mix_favourites_stored() {
                 Ok(f) if f.fresh => {}
                 stored => {
@@ -362,8 +387,8 @@ mod tests {
             (songs(200), None),
             (row(0), Some(Reading::Albums)),
             (row(20), None),
-            (PageAsk::Artist("a".into()), Some(Reading::Artist)),
-            (PageAsk::ArtistAbout("a".into()), None),
+            (PageAsk::Artist("a".into(), None), Some(Reading::Artist)),
+            (PageAsk::ArtistAbout("a".into(), None), None),
         ] {
             assert_eq!(ask.reading(), want, "{ask:?}");
         }

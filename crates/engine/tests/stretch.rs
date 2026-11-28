@@ -3,6 +3,7 @@
 //! phone. The true position is read from the audio: the left channel is a steady tone and the right one
 //! rises with song time, so their pitch ratio gives the position.
 
+use nori_player::key::ItemKey;
 use crate::common;
 
 use std::path::PathBuf;
@@ -79,14 +80,16 @@ impl Songs {
 }
 
 impl Library for Songs {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let (_, path, ms) = self.0.iter().find(|s| s.0 == id).cloned().ok_or("no such song")?;
         Ok(Located { source: Source::File(vec![path]), hint: Some("wav".into()), duration_ms: Some(ms), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
         let ms = self.0.iter().find(|s| s.0 == id).map_or(0, |s| s.2);
-        WindowSong { id: id.into(), title: id.into(), duration_ms: ms, ..Default::default() }
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: ms, ..Default::default() }
     }
 }
 
@@ -96,20 +99,23 @@ fn beat_matched() -> Plan {
     let mut t = plan::plan(None, None, (A_SECS * 1000.0) as i64, (B_SECS * 1000.0) as i64, &s);
     (t.out_start_ms, t.in_start_ms, t.duration_ms) = (MIX_AT_MS, SKIP_MS, MIX_MS);
     (t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms) = (TEMPO as f64, true, RAMP_MS);
-    Plan { incoming_id: "b".into(), mixer: t }
+    Plan { incoming_id: ItemKey::own("b"), mixer: t }
 }
 
 struct Planned(sim::App);
 
 impl Host for Planned {
-    fn plan_for(&mut self, id: &str) -> Option<Plan> {
+    fn plan_for(&mut self, id_key: &ItemKey) -> Option<Plan> {
+        let id = id_key.id.as_str();
         (id == "a").then(beat_matched)
     }
-    fn wants_analysis(&mut self, id: &str) -> Option<u64> {
-        self.0.wants_analysis(id)
+    fn wants_analysis(&mut self, id_key: &ItemKey) -> Option<u64> {
+        let id = id_key.id.as_str();
+        self.0.wants_analysis(&ItemKey::own(id))
     }
-    fn analysed(&mut self, id: &str, a: Analyzer, channels: usize, frames: u64, rate: u32) {
-        self.0.analysed(id, a, channels, frames, rate)
+    fn analysed(&mut self, id_key: &ItemKey, a: Analyzer, channels: usize, frames: u64, rate: u32) {
+        let id = id_key.id.as_str();
+        self.0.analysed(&ItemKey::own(id), a, channels, frames, rate)
     }
     fn log(&mut self, message: &str) {
         self.0.log(message)
@@ -126,7 +132,7 @@ impl App for Planned {
     fn auto_mix(&self) -> bool {
         true
     }
-    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[ItemKey], shuffling: bool) {
         self.0.window(songs, ids, shuffling)
     }
     fn transitions_off(&mut self, off: bool) {
@@ -148,7 +154,7 @@ impl Rig {
     /// Plays `a` then `b` from `from_ms` into `a`, at `speed`.
     fn start(from_ms: i64, speed: f32) -> Rig {
         let queue = SharedQueue::default();
-        queue.0.lock().set(vec!["a".into(), "b".into()], Some(0), false, 0);
+        queue.0.lock().set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(0), false, 0);
         let card = Card::new();
         let clock = Virtual::default();
         let mut app = sim::App::new();

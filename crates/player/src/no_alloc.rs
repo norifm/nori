@@ -91,20 +91,20 @@ struct App {
 }
 
 impl Host for App {
-    fn plan_for(&mut self, _: &str) -> Option<Plan> {
+    fn plan_for(&mut self, _: &crate::key::ItemKey) -> Option<Plan> {
         self.plan.clone()
     }
-    fn wants_analysis(&mut self, _: &str) -> Option<u64> {
+    fn wants_analysis(&mut self, _: &crate::key::ItemKey) -> Option<u64> {
         self.analyse.then_some(0)
     }
-    fn analysed(&mut self, _: &str, _: Analyzer, _: usize, _: u64, _: u32) {}
+    fn analysed(&mut self, _: &crate::key::ItemKey, _: Analyzer, _: usize, _: u64, _: u32) {}
     fn now_ms(&self) -> i64 {
         0
     }
 }
 
 fn stream(id: &str, f: Format) -> StreamFormat {
-    StreamFormat { id: crate::engine::StreamId { song: id.into(), serial: id.as_bytes()[0] as u64 }, format: f }
+    StreamFormat { id: crate::engine::StreamId { song: crate::key::ItemKey::own(id), serial: id.as_bytes()[0] as u64 }, format: f }
 }
 
 /// Feeds `data` from `from_us`; total allocations after the first `warm` buffers.
@@ -156,7 +156,7 @@ fn holding_and_mixing() {
         let s = AutoMixSettings { max_transition_s: 6.0, ..Default::default() };
         let mut t = plan::plan(None, None, 60_000, 60_000, &s);
         (t.out_start_ms, t.tempo_ratio, t.keep_pitch) = (4_000, 1.0, true);
-        let p = Plan { incoming_id: "b".into(), mixer: t.clone() };
+        let p = Plan { incoming_id: crate::key::ItemKey::own("b"), mixer: t.clone() };
         let (mut e, mut d, mut h) = (TransitionEngine::new(), Sink { bytes: 0 }, App { plan: Some(p), analyse: false });
         e.configure(&mut d, &mut h, stream("a", FMT));
         e.set_gain(a);
@@ -252,7 +252,7 @@ fn heard_tracker() {
 fn playhead_and_fade_tick() {
     use crate::heard::{Playhead, Seen};
     let mut t = HeardTracker::new();
-    t.set_queue([("a".to_string(), 200_000), ("b".to_string(), 180_000)]);
+    t.set_queue([(crate::key::ItemKey::own("a"), 200_000), (crate::key::ItemKey::own("b"), 180_000)]);
     let mut p = Playhead::new();
     let mut sum = 0i64;
     let mut vol = 0f32;

@@ -19,16 +19,16 @@
   import Seal from "../ui/Seal.svelte";
   import SongList from "../ui/SongList.svelte";
 
-  let { id }: { id: string } = $props();
+  let { id, source }: { id: string; source?: string } = $props();
   type Group = { kind: string; tag: string; albums: number[] };
   /** The core's `ArtistAbout`. */
   type About = { biography: string | null; lastFm: string | null; musicbrainz: string | null; similar: Artist[] };
   let aboutRead = $state.raw<About & { id: string }>();
   const page = reading("artist", async () => {
-    const d = await read<{ artist: Artist; picture?: string; albums: Album[]; songs: Song[]; few: number; groups: Group[] }>({ kind: "artist", id });
+    const d = await read<{ artist: Artist; picture?: string; albums: Album[]; songs: Song[]; few: number; groups: Group[]; releaseSongs: number | null }>({ kind: "artist", id, source });
     // After the page: a provider answers both from one read of the artist. A page without it is still the page.
     const asked = id;
-    void read<About>({ kind: "artistAbout", id: asked }).then((a) => (aboutRead = { ...a, id: asked }), () => {});
+    void read<About>({ kind: "artistAbout", id: asked, source }).then((a) => (aboutRead = { ...a, id: asked }), () => {});
     return { ...d, tools: JSON.parse(await ask<string>("page_actions", "Artist", d.songs.length)) as string[] };
   });
   // The answer while it is this page's: the page stays mounted when another artist opens over it.
@@ -52,16 +52,16 @@
   const label = $derived.by(() => {
     if (!data) return a?.albumCount ? W.releases(a.albumCount) : "";
     if (!albums.length) return songs.length ? W.songCount(songs.length) : "";
-    const n = albums.reduce((s, x) => s + (x.songCount || 0), 0);
+    const n = page.data?.releaseSongs ?? 0;
     return [W.releases(albums.length), n ? W.songCount(n) : ""].filter(Boolean).join(" · ");
   });
 </script>
 
 <Page back sketch="Artist" ready={!!a} error={page.error}>
   {#if a}
-    <ArtistHead id={a.id} name={a.name} cover={a.cover} picture={data?.picture} onplay={(s) => void player.playWhole("artist", id, s)}>
+    <ArtistHead id={a.id} name={a.name} cover={a.cover} picture={data?.picture} onplay={(s) => void player.playWhole("artist", id, s, a.source ?? source)}>
       {#snippet actions()}
-        {#if !remote.jam?.guest}<Seal what="artist" id={a.id} on={!!a.starred} />{/if}
+        {#if !remote.jam?.guest}<Seal what="artist" id={a.id} source={a.source ?? source} on={!!a.starred} />{/if}
       {/snippet}
     </ArtistHead>
     <div class="list-head">

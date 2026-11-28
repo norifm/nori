@@ -25,7 +25,7 @@
     one = false,
     extra = () => [],
   }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; rows?: number[]; shown?: number; moved?: (from: number, to: number) => unknown; one?: boolean; extra?: (s: Song, i: number) => Item[] | Promise<Item[]> } = $props();
-  const playingId = $derived(player.song?.id);
+  const playingKey = $derived(player.song?.key);
   let all = $state(false);
   const at = $derived(rows ?? songs.map((_, i) => i));
   const drawn = $derived(all || shown === undefined ? at : at.slice(0, shown));
@@ -43,10 +43,10 @@
   {#each drawn as i (`${i}:${songs[i].id}`)}
     {@const s = songs[i]}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <li oncontextmenu={(e) => (e.preventDefault(), void songMenu(s, pointer(e), { play: () => play(i), extra: extra(s, i) }))} class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
+    <li oncontextmenu={(e) => (e.preventDefault(), void songMenu(s, pointer(e), { play: () => play(i), extra: extra(s, i) }))} class:now={s.key === playingKey} data-row={moved ? "" : undefined} data-at={i}>
       <button class="play" onclick={() => void play(i)}>
         {#if numbered}
-          <span class="n">{#if s.id === playingId}<span class="now-bars"><PlayingBars moving={player.advancing} w={14} h={13} /></span>{:else}{s.track || i + 1}{/if}</span>
+          <span class="n">{#if s.key === playingKey}<span class="now-bars"><PlayingBars moving={player.advancing} w={14} h={13} /></span>{:else}{s.track || i + 1}{/if}</span>
         {:else}
           <span class="art"><Cover src={s.cover} radius="var(--row-art)" /></span>
         {/if}

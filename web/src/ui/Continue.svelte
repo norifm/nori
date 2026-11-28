@@ -16,14 +16,14 @@
   let vars = $state("");
   // Asked each time Home is drawn, while nothing plays here: as the server last answered, so the card is
   // there with the page, then as it answers now.
-  const shown = [player.playing, player.song?.id ?? null] as const;
+  const shown = [player.playing, player.song?.key ?? null] as const;
   void ask<string>("queue_offer_kept", ...shown)
     .then((j) => (offer = JSON.parse(j)), () => {})
     .then(() => ask<string>("queue_offer", ...shown))
     .then((j) => (offer = JSON.parse(j)), () => {});
   // Music started, or the player came to show the offered song: the core lets the offer go.
   $effect(() => {
-    const here = player.song?.id ?? null;
+    const here = player.song?.key ?? null;
     const playing = player.playing;
     if (offer) void ask<boolean>("queue_offer_still", here, playing).then((s) => !s && (offer = null));
   });

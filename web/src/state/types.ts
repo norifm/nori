@@ -2,6 +2,8 @@
 
 export type Song = {
   id: string;
+  /** What tells it apart from another source's song of the same id, in the queue and the player. */
+  key: string;
   title: string;
   artist: string;
   album: string;
@@ -24,9 +26,12 @@ export type Song = {
   userRating?: number;
   /** A provider's, not in the library yet. */
   isExternal?: boolean;
+  /** Which merged source of the profile it comes from; omitted for the profile's own. */
+  source?: string | null;
+  sourceMarked?: boolean;
 };
 /** `subtitle`: a card's line under its name, as the core words it. */
-export type Album = { id: string; name: string; artist: string; artistId?: string; year: number; cover?: string; songCount: number; duration: number; genre?: string; starred?: boolean; subtitle?: string; /** A provider's, not in the library yet. */ isExternal?: boolean };
+export type Album = { id: string; name: string; artist: string; artistId?: string; year: number; cover?: string; songCount: number; duration: number; genre?: string; starred?: boolean; subtitle?: string; /** A provider's, not in the library yet. */ isExternal?: boolean; source?: string | null; sourceMarked?: boolean };
 /** What a card plays whole. */
 export type Whole = "album" | "playlist" | "artist" | "mix";
 /** A mix on Home's "For you" (the core's `mix_cards`): `name` the core's `MixName`, up to four covers, and
@@ -34,8 +39,8 @@ export type Whole = "album" | "playlist" | "artist" | "mix";
 export type MixTile = { id: string; name: string; favourites: boolean; covers: string[]; page: string; ink: string };
 /** A mix's page (the core's `mix_page`): the songs as they play. */
 export type MixPage = { id: string; name: string; favourites: boolean; seconds: number; covers: string[]; songs: Song[] };
-export type Artist = { id: string; name: string; cover?: string; albumCount?: number | null; starred?: boolean; isExternal?: boolean };
-export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string; /** The account may change it (the core's `playlist_editable`). */ editable?: boolean; /** Pinned in this browser. */ pinned?: boolean; /** A provider's, not in the library yet. */ remote?: boolean };
+export type Artist = { id: string; name: string; cover?: string; albumCount?: number | null; starred?: boolean; isExternal?: boolean; source?: string | null; sourceMarked?: boolean };
+export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string; /** The account may change it (the core's `playlist_editable`). */ editable?: boolean; /** Pinned in this browser. */ pinned?: boolean; /** A provider's, not in the library yet. */ remote?: boolean; source?: string | null; sourceMarked?: boolean; mixed?: boolean };
 /** A playlist songs can go into: `adds`, the ones it lacks; `holds`, how many it has already. */
 export type PlaylistChoice = { playlist: Playlist; adds: string[]; holds: number };
 /** As the server names it: the name is `value`. */
@@ -155,10 +160,12 @@ export type Equalizer = {
 export type ProfileIcon = "Letter" | "Provider" | "Sing" | "Surprise" | "Talking" | "LookUp" | "Satisfied" | "Think";
 /** A saved profile (the worker's `profiles`): `label` its name or its address's host, `letter` the one
  * `Letter` shows, `on` the one open. */
-export type Profile = { id: string; kind: string; label: string; user: string; host: string; icon: ProfileIcon; letter: string; on: boolean };
+export type Profile = { id: string; kind: string; label: string; user: string; host: string; icon: ProfileIcon; letter: string; on: boolean; sources?: string[] };
 /** The saved profiles in their order, the icons a circle can show in the picker's order, and whether they may
  * be changed here (a jam guest's are its host's). */
 export type Profiles = { picks: boolean; icons: ProfileIcon[]; list: Profile[] };
+/** A profile's merged sources (`profile_sources`): those it plays from, and saved profiles it can take. */
+export type ProfileSources = { shown: boolean; sources: Profile[]; offered: Profile[] };
 /** One of the active server's music libraries (`music_folders`): whether it is shown, and the
  * `musicFolders` value switching it stores. */
 export type MusicFolderSwitch = { id: string; name: string; on: boolean; tapped: string };

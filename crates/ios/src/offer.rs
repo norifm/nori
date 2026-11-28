@@ -19,10 +19,10 @@ fn offer() -> std::sync::MutexGuard<'static, Offered> {
 }
 
 /// What the player shows: its song and whether it plays.
-fn shown() -> (Option<String>, bool) {
+fn shown() -> (Option<nori_core::ItemKey>, bool) {
     with_session(|s| {
         let n = s.now();
-        (n.song.map(|song| song.id), n.playing)
+        (n.song.as_ref().map(nori_core::Keyed::key), n.playing)
     })
     .unwrap_or((None, false))
 }

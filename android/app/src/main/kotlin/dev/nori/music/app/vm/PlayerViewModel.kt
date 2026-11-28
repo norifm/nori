@@ -1,5 +1,6 @@
 package dev.nori.music.app.vm
 
+import dev.nori.music.data.key
 import android.app.Application
 import dev.nori.music.data.wordsOf
 import dev.nori.music.ffi.lyrics.LyricsEnd
@@ -40,8 +41,8 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     /** Asks the plugins for their lines under the output row: when the player opens and when the song changes, never on a timer. */
     fun askPluginStatus() = viewModelScope.launch { _pluginStatus.value = runCatching { nori.plugins.playerStatus() }.getOrDefault(emptyList()) }
 
-    /** Just the id, so a list can highlight its playing row without observing the whole player. */
-    val currentId: StateFlow<String?> = state.map { it.current?.id }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    /** Just the key, so a list can highlight its playing row without observing the whole player. */
+    val currentKey: StateFlow<dev.nori.music.ffi.model.ItemKey?> = state.map { it.current?.key }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
      * Whether the queue is the one [page] started (nori-queue `playlist_from`): its Play or Shuffle, or a
@@ -99,15 +100,15 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LyricsNow.NoSong)
 
     /**
-     * The lyrics shown for [songId] a step sooner ([dir] > 0) or later (< 0), or back to the core's
+     * The lyrics shown for [song] a step sooner ([dir] > 0) or later (< 0), or back to the core's
      * timing (0); the core keeps it for those words.
      */
-    fun nudgeLyrics(songId: String, dir: Int) {
-        val found = lyrics.value.wordsOf(songId) ?: return
+    fun nudgeLyrics(song: dev.nori.music.ffi.model.ItemKey, dir: Int) {
+        val found = lyrics.value.wordsOf(song) ?: return
         viewModelScope.launch {
-            val retimed = nori.library.lyricsNudge(songId, found, dir)
+            val retimed = nori.library.lyricsNudge(song, found, dir)
             val pick = LyricsPick(retimed.lyrics, retimed.source)
-            if (kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { lyricsHeard.retimed(songId, pick) }) lyricsRetimed.tryEmit(LyricsNow.Shown(songId, pick))
+            if (kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { lyricsHeard.retimed(song, pick) }) lyricsRetimed.tryEmit(LyricsNow.Shown(song, pick))
         }
     }
 
@@ -117,10 +118,10 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         if (open) viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { nori.client.lyricsPrefetch() } }
     }
 
-    private fun lyricsFound() = state.map { it.current }.distinctUntilChanged { a, b -> a?.id == b?.id }
+    private fun lyricsFound() = state.map { it.current }.distinctUntilChanged { a, b -> a?.key == b?.key }
         .flatMapLatest { song ->
             kotlinx.coroutines.flow.flow {
-                emit(lyricsHeard.hear(song?.id))
+                emit(lyricsHeard.hear(song?.key))
                 if (song == null) return@flow
                 val id = lyricsHeard.fetch() ?: return@flow
                 var failed = false
@@ -141,7 +142,7 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
     /** A plugin's sleeve paired with the song it belongs to, so a replayed value is never shown on another song. */
-    data class SongArtwork(val songId: String, val artwork: dev.nori.music.ffi.plugins.Artwork)
+    data class SongArtwork(val song: dev.nori.music.ffi.model.ItemKey, val artwork: dev.nori.music.ffi.plugins.Artwork)
 
     /**
      * The sleeve a plugin gives the song playing (the artwork slot), or null for nori's own cover. Asked
@@ -149,21 +150,21 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
      * from null, so the last one's loop steps back at once rather than playing on under the new cover.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val artwork: StateFlow<SongArtwork?> = state.map { it.current }.distinctUntilChanged { a, b -> a?.id == b?.id }
+    val artwork: StateFlow<SongArtwork?> = state.map { it.current }.distinctUntilChanged { a, b -> a?.key == b?.key }
         .flatMapLatest { song ->
             kotlinx.coroutines.flow.flow<SongArtwork?> {
                 // The answer [warmArtwork] already had for it comes at once, without asking again.
-                val warmed = warm?.takeIf { it.song == song?.id }
+                val warmed = warm?.takeIf { it.song == song?.key }
                 if (warmed != null) emit(warmed.artwork?.let { SongArtwork(warmed.song, it) })
                 else {
                     emit(null)
-                    if (song != null) emit(runCatching { nori.plugins.artwork(song) }.getOrNull()?.let { SongArtwork(song.id, it) })
+                    if (song != null) emit(runCatching { nori.plugins.artwork(song) }.getOrNull()?.let { SongArtwork(song.key, it) })
                 }
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** The next song's sleeve, asked ahead; only ever one. */
-    private class Warmed(val song: String, val artwork: dev.nori.music.ffi.plugins.Artwork?)
+    private class Warmed(val song: dev.nori.music.ffi.model.ItemKey, val artwork: dev.nori.music.ffi.plugins.Artwork?)
     @Volatile private var warm: Warmed? = null
 
     /**
@@ -177,9 +178,9 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     }
 
     fun warmArtwork(song: dev.nori.music.ffi.model.Song, posterSize: Int): kotlinx.coroutines.Job = viewModelScope.launch {
-        if (warm?.song == song.id) return@launch
+        if (warm?.song == song.key) return@launch
         val art = runCatching { nori.plugins.artwork(song) }.getOrNull()
-        warm = Warmed(song.id, art)
+        warm = Warmed(song.key, art)
         val shown = art ?: return@launch
         val picture = if (shown.looping) shown.poster?.replace("{size}", posterSize.toString()) else shown.url
         picture?.let { dev.nori.music.data.CoverLoader.get(getApplication()).prefetch(it) }
@@ -193,7 +194,7 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     private val motionLazy = lazy {
         nori.motionPlayer { status ->
             val song = state.value.current ?: return@motionPlayer
-            val shown = artwork.value?.takeIf { it.songId == song.id }?.artwork ?: return@motionPlayer
+            val shown = artwork.value?.takeIf { it.song == song.key }?.artwork ?: return@motionPlayer
             viewModelScope.launch { nori.plugins.artworkFailed(shown, song, status) }
         }
     }
@@ -265,8 +266,8 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     /** The place still moves: the lyrics go on being drawn through a pause's fade. */
     val placeRuns: Boolean get() = player.placeRuns
 
-    /** [positionMs] while the song playing is still [songId]; null once the player has left it. */
-    fun positionIn(songId: String?): Long? = dev.nori.music.data.playheadFor(songId, state.value.current?.id) { player.positionMs }
+    /** [positionMs] while the song playing is still [song]; null once the player has left it. */
+    fun positionIn(song: dev.nori.music.ffi.model.ItemKey?): Long? = dev.nori.music.data.playheadFor(song, state.value.current?.key) { player.positionMs }
 
     fun connect() = player.connect()
     fun toggle() = player.toggle()

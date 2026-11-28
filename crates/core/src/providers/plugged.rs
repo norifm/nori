@@ -57,7 +57,7 @@ impl Library for Opened {
     fn queue(&self, start: u32, count: u32) -> Vec<Song> {
         let Some(c) = self.0.upgrade() else { return Vec::new() };
         let q = &c.core.session;
-        let ids: Vec<String> = q.playlist(|p| p.ids().iter().skip(start as usize).take(count as usize).cloned().collect());
+        let ids: Vec<crate::ItemKey> = q.playlist(|p| p.ids().iter().skip(start as usize).take(count as usize).cloned().collect());
         q.songs(ids)
     }
 
@@ -82,10 +82,14 @@ impl Library for Opened {
         }
     }
 
+    fn queued(&self, key: &crate::ItemKey) -> Option<Song> {
+        self.0.upgrade()?.core.session.song(key)
+    }
+
     fn songs(&self, ids: &[String]) -> Result<Vec<Song>, t::Error> {
         let c = self.client()?;
         ids.iter()
-            .map(|id| match c.core.session.song(id) {
+            .map(|id| match c.core.session.song(&crate::ItemKey::own(id)) {
                 Some(s) => Ok(s),
                 None => match self.read(Read::SongById { id: id.clone() })? {
                     Page::OneSong { v: Some(s) } => Ok(s),
@@ -159,7 +163,7 @@ impl Library for Opened {
     fn synced_lyrics(&self, song: &Song) -> Option<Vec<(u32, String)>> {
         let c = self.0.upgrade()?;
         let kept = Arc::new(Kept::default());
-        nori_tasks::block_on(c.lyrics_found(song.id.clone(), &c.lyrics_asked(), kept.clone())).ok()?;
+        nori_tasks::block_on(c.lyrics_found(crate::Keyed::key(song), &c.lyrics_asked(), kept.clone())).ok()?;
         let lyrics = kept.0.lock().take()?;
         Some(lyrics.lines.into_iter().filter(|l| l.start_ms >= 0).map(|l| (l.start_ms as u32, l.text)).collect())
     }

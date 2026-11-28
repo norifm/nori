@@ -9,10 +9,10 @@ use std::sync::{Arc, Mutex};
 
 use nori_core::browse::{album_sort_direction, album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_more, home_row_page, next_album_page, shelf_albums_read, song_sort_direction, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf, SortDirection};
 use nori_core::cache_policy::{Page, Read};
+use nori_core::home::HomePlace;
 use nori_core::numbers::{self, POINT};
 use nori_core::client::Starrable;
-use nori_core::client::Write;
-use nori_core::menus::{download_entries, page_actions, playlist_edit_write, playlist_edits, playlist_editable, DownloadAct, PageAction, PageKind, PlaylistEdit, SongDownload};
+use nori_core::menus::{download_entries, page_actions, playlist_edits, DownloadAct, PageAction, PageKind, PlaylistEdit, SongDownload};
 use nori_core::pages::release_groups;
 use nori_core::mixes::board::{MixLookup, MixTile, FAVOURITES_MIX};
 use nori_core::stage::QueueRows;
@@ -21,7 +21,7 @@ use nori_core::lyrics_follow::LyricsNow;
 use nori_core::search::SearchShown;
 use nori_covers::loader::Ticket;
 use nori_engine::State;
-use nori_host::session::{read_pages, Chore};
+use nori_host::session::{read_pages, read_pages_in, Chore};
 use nori_host::pages::{HomePart, ShelfItems};
 use nori_host::Fetch;
 use nori_core::settings::HomeRow;
@@ -111,8 +111,8 @@ struct List {
     token: u64,
     songs: Vec<Song>,
     origin: Option<PageOrigin>,
-    /// A playlist the account may change (the core's `playlist_editable`).
-    editable: bool,
+    /// The playlist it is, when the profile may change it (the core's `playlist_editable_in`).
+    editable: Option<Playlist>,
 }
 
 static LISTS: Mutex<VecDeque<List>> = Mutex::new(VecDeque::new());
@@ -123,7 +123,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 pub(crate) fn keep_list(token: u64, songs: Vec<Song>, origin: Option<PageOrigin>) {
-    keep(List { token, songs, origin, editable: false });
+    keep(List { token, songs, origin, editable: None });
 }
 
 fn keep(list: List) {
@@ -137,15 +137,15 @@ fn keep(list: List) {
 
 /// What row `index` of list `token` offers to change, when it is a playlist the account may change.
 pub(crate) fn list_edits(token: u64, index: u32) -> Vec<PlaylistEdit> {
-    lock(&LISTS).iter().find(|l| l.token == token).map_or_else(Vec::new, |l| playlist_edits(index, l.songs.len() as u32, l.editable))
+    lock(&LISTS).iter().find(|l| l.token == token).map_or_else(Vec::new, |l| playlist_edits(index, l.songs.len() as u32, l.editable.is_some()))
 }
 
-/// The write `edit` of row `index` of list `token` asks for, when it is a playlist the account may change.
-pub(crate) fn list_edit_write(token: u64, index: u32, edit: PlaylistEdit) -> Option<Write> {
+/// The change `edit` of row `index` of list `token` makes, when it is a playlist the profile may change.
+pub(crate) fn list_edit(token: u64, index: u32, edit: PlaylistEdit) -> Option<(Playlist, nori_host::session::PlaylistChange)> {
     let lists = lock(&LISTS);
-    let l = lists.iter().find(|l| l.token == token).filter(|l| l.editable)?;
-    let id = l.origin.as_ref().filter(|o| o.kind == OriginKind::Playlist)?.id.clone();
-    playlist_edit_write(id, l.songs.iter().map(|s| s.id.clone()).collect(), index, edit)
+    let l = lists.iter().find(|l| l.token == token)?;
+    let songs = l.songs.iter().map(|s| s.id.clone()).collect();
+    Some((l.editable.clone()?, nori_host::session::PlaylistChange::Edit { songs, index, edit }))
 }
 
 /// The session closed: its lists name another server's songs.
@@ -183,7 +183,7 @@ pub(crate) fn extend_list(token: u64, more: &[Song]) -> Option<usize> {
 
 pub(crate) fn send(token: u64, v: &Value) {
     let Some(cb) = *lock(&PAGE_HOOK) else { return };
-    let marked = v.get("sections").and_then(|_| with_session(|s| with_download_marks(s, v.clone())));
+    let marked = v.get("sections").and_then(|_| with_session(|s| with_source_marks(s, with_download_marks(s, v.clone()))));
     let text = CString::new(marked.as_ref().unwrap_or(v).to_string().replace('\0', " ")).unwrap_or_default();
     unsafe { cb(token, text.as_ptr()) };
 }
@@ -195,13 +195,28 @@ fn with_download_marks(s: &nori_host::session::Session, mut v: Value) -> Value {
     let page = matches!(v["head"]["k"].as_str(), Some("album" | "downloadedAlbum" | "playlist" | "mix" | "smart"));
     let Some(sections) = v["sections"].as_array_mut() else { return v };
     let mut rows: Vec<&mut Value> = sections.iter_mut().filter_map(|x| x["items"].as_array_mut()).flatten().filter(|r| r["k"] == "song").collect();
-    let ids: Vec<String> = rows.iter().map(|r| r["id"].as_str().unwrap_or_default().to_string()).collect();
-    let marks = s.download_glyphs(&ids.iter().map(String::as_str).collect::<Vec<_>>(), page);
+    let ids: Vec<nori_core::ItemKey> = rows.iter().map(|r| row_key(r)).collect();
+    let marks = s.download_glyphs(&ids, page);
     for (row, mark) in rows.iter_mut().zip(marks) {
         match mark {
             DownloadGlyph::Done => row["dl"] = json!(2),
             DownloadGlyph::Ring | DownloadGlyph::Failed => row["dl"] = json!(1),
             DownloadGlyph::None => {}
+        }
+    }
+    v
+}
+
+/// `v`'s items the core marks (`marked`) with their source's circle, `mark`: `{icon, letter}` as the
+/// profile lists show it, of the source `src` names (absent: the profile's own).
+fn with_source_marks(s: &nori_host::session::Session, mut v: Value) -> Value {
+    let Some(sections) = v["sections"].as_array_mut() else { return v };
+    let prefs = s.core.session.settings.current().unwrap_or_default();
+    for row in sections.iter_mut().filter_map(|x| x["items"].as_array_mut()).flatten().filter(|r| r["marked"] == true) {
+        let source = row["src"].as_str().map(String::from);
+        if let Some(sv) = nori_core::settings::source_profile(prefs.servers.clone(), prefs.active_server_id.clone(), source) {
+            let letter = nori_core::settings::profile_letter(sv.clone(), nori_core::settings::label(&sv.name, &sv.url));
+            row["mark"] = json!({ "icon": sv.icon.id(), "letter": letter });
         }
     }
     v
@@ -226,12 +241,64 @@ fn cover(c: &Option<String>) -> &str {
     c.as_deref().unwrap_or("")
 }
 
+/// An album, artist, playlist or song as the app hands it back: its id, and where it is kept when that
+/// is not the profile's own source: another source, or this device for a playlist of nori's own.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ItemRef {
+    pub(crate) id: String,
+    pub(crate) source: Option<String>,
+    pub(crate) mixed: bool,
+}
+
+impl ItemRef {
+    /// What the app is given for the item: the bare id for one of the profile's own source, else this as
+    /// JSON, so a profile of one source crosses as before.
+    pub(crate) fn sent(id: &str, source: &Option<String>, mixed: bool) -> String {
+        match (source, mixed) {
+            (None, false) => id.to_string(),
+            _ => json!({ "id": id, "source": source, "mixed": mixed }).to_string(),
+        }
+    }
+
+    /// What the app handed back, as [`ItemRef::sent`] gave it: JSON, or a bare id of the profile's own.
+    pub(crate) fn taken(arg: &str) -> ItemRef {
+        match serde_json::from_str::<Value>(arg) {
+            Ok(v) if v.is_object() => ItemRef {
+                id: v["id"].as_str().unwrap_or_default().to_string(),
+                source: v["source"].as_str().map(String::from),
+                mixed: v["mixed"].as_bool().unwrap_or(false),
+            },
+            _ => ItemRef { id: arg.to_string(), ..ItemRef::default() },
+        }
+    }
+
+    /// The playlist it names, as far as changing it needs.
+    pub(crate) fn playlist(self) -> Playlist {
+        Playlist { id: self.id, source: self.source, mixed: self.mixed, ..Playlist::default() }
+    }
+
+    fn at(&self) -> nori_core::sources::PlaylistAt {
+        nori_core::sources::playlist_at(&self.clone().playlist())
+    }
+}
+
+/// An item's link to album or artist `id` of `source` ([`ItemRef::sent`]); empty for none.
+fn link(id: &Option<String>, source: &Option<String>) -> String {
+    id.as_deref().map(|id| ItemRef::sent(id, source, false)).unwrap_or_default()
+}
+
+/// A song row's key, from its `src` and `id`.
+fn row_key(row: &Value) -> nori_core::ItemKey {
+    nori_core::ItemKey { source: row["src"].as_str().map(String::from), id: row["id"].as_str().unwrap_or_default().to_string() }
+}
+
+/// A song as the app lists it; `key` is what tells it apart in the queue and the player (`ItemKey::text`).
 pub(crate) fn song_json(s: &Song, i: usize) -> Value {
     json!({
-        "k": "song", "id": s.id, "t": s.title, "s": s.artist, "a": s.album,
-        "albumId": s.album_id.as_deref().unwrap_or(""), "artistId": s.artist_id.as_deref().unwrap_or(""),
+        "k": "song", "id": s.id, "key": nori_core::Keyed::key(s).text(), "ref": ItemRef::sent(&s.id, &s.source, false), "t": s.title, "s": s.artist, "a": s.album,
+        "albumId": link(&s.album_id, &s.source), "artistId": link(&s.artist_id, &s.source),
         "c": cover(&s.cover_art), "d": s.duration, "i": i, "x": s.is_external, "n": s.track,
-        "disc": s.disc_number, "st": s.starred,
+        "disc": s.disc_number, "st": s.starred, "marked": s.source_marked, "src": s.source,
     })
 }
 
@@ -242,8 +309,8 @@ fn album_json(a: &Album) -> Value {
         &a.subtitle
     };
     json!({
-        "k": "album", "id": a.id, "t": a.name, "s": sub, "c": cover(&a.cover_art), "y": a.year,
-        "x": a.is_external, "artistId": a.artist_id.as_deref().unwrap_or(""),
+        "k": "album", "id": a.id, "ref": ItemRef::sent(&a.id, &a.source, false), "t": a.name, "s": sub, "c": cover(&a.cover_art), "y": a.year,
+        "x": a.is_external, "artistId": link(&a.artist_id, &a.source), "marked": a.source_marked, "src": a.source,
     })
 }
 
@@ -255,7 +322,7 @@ fn album_json(a: &Album) -> Value {
 /// artists last (key `similar`).
 fn artist_page(token: u64, v: &nori_core::ArtistDetail, about: Option<&nori_core::pages::ArtistAbout>) -> Value {
     let a = &v.artist;
-    keep_list(token, v.songs.clone(), Some(Fetch::Artist(a.id.clone()).origin()));
+    keep_list(token, v.songs.clone(), Some(Fetch::Artist(a.id.clone(), a.source.clone()).origin()));
     let mut sections: Vec<Value> = Vec::new();
     if let Some(about) = about {
         let bio = about.biography.iter().map(|b| json!({ "k": "bio", "id": "", "t": b }));
@@ -278,8 +345,8 @@ fn artist_page(token: u64, v: &nori_core::ArtistDetail, about: Option<&nori_core
     }
     json!({
         "head": {
-            "k": "artist", "id": a.id, "t": a.name, "c": cover(&a.cover_art), "n": v.albums.len(), "ns": v.songs.len(), "st": a.starred,
-            "albumSongs": v.albums.iter().map(|al| al.song_count).sum::<u32>(),
+            "k": "artist", "id": a.id, "ref": ItemRef::sent(&a.id, &a.source, false), "t": a.name, "c": cover(&a.cover_art), "n": v.albums.len(), "ns": v.songs.len(), "st": a.starred,
+            "albumSongs": v.release_songs.unwrap_or_default(),
         },
         "sections": sections,
     })
@@ -289,8 +356,8 @@ fn album_page(v: &nori_core::AlbumDetail) -> Value {
     let a = &v.album;
     json!({
         "head": {
-            "k": "album", "id": a.id, "t": a.name, "s": a.artist,
-            "artistId": a.artist_id.as_deref().unwrap_or(""), "c": cover(&a.cover_art),
+            "k": "album", "id": a.id, "ref": ItemRef::sent(&a.id, &a.source, false), "t": a.name, "s": a.artist,
+            "artistId": link(&a.artist_id, &a.source), "c": cover(&a.cover_art),
             "y": a.year, "g": a.genre.as_deref().unwrap_or(""), "sec": v.seconds,
             "n": v.songs.len(), "st": a.starred,
         },
@@ -299,12 +366,12 @@ fn album_page(v: &nori_core::AlbumDetail) -> Value {
 }
 
 fn artist_json(a: &Artist) -> Value {
-    json!({ "k": "artist", "id": a.id, "t": a.name, "n": a.album_count, "c": cover(&a.cover_art), "x": a.is_external })
+    json!({ "k": "artist", "id": a.id, "ref": ItemRef::sent(&a.id, &a.source, false), "t": a.name, "n": a.album_count, "c": cover(&a.cover_art), "x": a.is_external, "marked": a.source_marked, "src": a.source })
 }
 
 /// A playlist row; `s` is its own line (a provider's, who made it), for one not counted until opened.
 fn playlist_json(p: &Playlist) -> Value {
-    let mut v = json!({ "k": "playlist", "id": p.id, "t": p.name, "n": p.song_count, "d": p.duration, "c": cover(&p.cover_art) });
+    let mut v = json!({ "k": "playlist", "id": p.id, "ref": ItemRef::sent(&p.id, &p.source, p.mixed), "t": p.name, "n": p.song_count, "d": p.duration, "c": cover(&p.cover_art), "marked": p.source_marked, "src": p.source });
     if let Some(line) = &p.comment {
         v["s"] = json!(line);
     }
@@ -393,26 +460,24 @@ fn section(key: &str, grid: bool, items: Vec<Value>) -> Value {
 }
 
 /// A feed's shelves as titled sections (key `feed`); their songs are kept as one list for `token`.
-fn feed_sections(token: u64, feed: &[nori_core::FeedShelf]) -> Vec<Value> {
-    let mut songs = Vec::new();
+/// A source's own Home shelf as sections, titled as it titles it: its songs (after `songs`, the list taps
+/// play from), its albums and its playlists.
+fn feed_shelf(f: &nori_core::FeedShelf, songs: &mut Vec<Song>) -> Vec<Value> {
+    let titled = |mut v: Value| {
+        v["title"] = json!(f.title);
+        v
+    };
     let mut out = Vec::new();
-    for f in feed {
-        let titled = |mut v: Value| {
-            v["title"] = json!(f.title);
-            v
-        };
-        if !f.songs.is_empty() {
-            out.push(titled(songs_section("feed", &f.songs, songs.len())));
-            songs.extend(f.songs.iter().cloned());
-        }
-        if !f.albums.is_empty() {
-            out.push(titled(section("feed", true, f.albums.iter().map(album_json).collect())));
-        }
-        if !f.playlists.is_empty() {
-            out.push(titled(section("feed", true, f.playlists.iter().map(playlist_json).collect())));
-        }
+    if !f.songs.is_empty() {
+        out.push(titled(songs_section("feed", &f.songs, songs.len())));
+        songs.extend(f.songs.iter().cloned());
     }
-    keep_list(token, songs, None);
+    if !f.albums.is_empty() {
+        out.push(titled(section("feed", true, f.albums.iter().map(album_json).collect())));
+    }
+    if !f.playlists.is_empty() {
+        out.push(titled(section("feed", true, f.playlists.iter().map(playlist_json).collect())));
+    }
     out
 }
 
@@ -512,7 +577,7 @@ fn artist_shelves(albums: &[Album]) -> Vec<Value> {
             let row = &albums[from as usize..to];
             let mut s = section("artistRow", true, row.iter().map(album_json).collect());
             s["title"] = json!(row[0].artist);
-            s["artistId"] = json!(row[0].artist_id.as_deref().unwrap_or(""));
+            s["artistId"] = json!(link(&row[0].artist_id, &row[0].source));
             s
         })
         .collect()
@@ -615,8 +680,7 @@ fn with_progress(core: &nori_core::Core, rows: &mut Value) {
     let Some(items) = rows["items"].as_array_mut() else { return };
     core.transfers().with(|t| {
         for v in items {
-            let id = v["id"].as_str().unwrap_or_default().to_string();
-            if let (_, Some(f)) = t.row(&id) {
+            if let (_, Some(f)) = t.row(&row_key(v)) {
                 v["pct"] = json!(f.percent);
                 v["bps"] = json!(f.speed_bps);
                 v["eta"] = json!(f.eta_s);
@@ -652,11 +716,11 @@ fn list_prefs() -> HashMap<String, String> {
     with_session(|s| s.core.session.settings.prefs(|p| p.list_prefs.clone())).unwrap_or_default()
 }
 
-/// Album `id`'s page: the stored copy, then the server's.
-fn album(client: &nori_core::client::Client, token: u64, id: String) {
-    pages(client, token, Read::AlbumById { id }, &|p| match p {
+/// Album `it`'s page from its source: the stored copy, then the source's.
+fn album(client: &Arc<nori_core::client::Client>, token: u64, it: ItemRef) {
+    pages_from(token, &mut |got| nori_host::session::read_pages_in(client, it.source.clone(), Read::AlbumById { id: it.id.clone() }, got), &|p| match p {
         Page::AlbumPage { v } => {
-            keep_list(token, v.songs.clone(), Some(Fetch::Album(v.album.id.clone()).origin()));
+            keep_list(token, v.songs.clone(), Some(Fetch::Album(v.album.id.clone(), v.album.source.clone()).origin()));
             Some(album_page(&v))
         }
         _ => None,
@@ -680,8 +744,17 @@ fn pages_sent(
     read: Read,
     make: &dyn Fn(Page) -> Option<Value>,
 ) -> bool {
+    pages_from(token, &mut |got| read_pages(client, read.clone(), got), make)
+}
+
+/// [`pages_sent`] of what `reading` reads, handing each page to the function it is given.
+fn pages_from(
+    token: u64,
+    reading: &mut nori_host::pages::PageReader<'_>,
+    make: &dyn Fn(Page) -> Option<Value>,
+) -> bool {
     let mut any = false;
-    let r = read_pages(client, read, |p| {
+    let r = reading(&mut |p| {
         if let Some(v) = make(p) {
             any = true;
             send(token, &v);
@@ -704,38 +777,47 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
         return;
     };
     match kind {
-        // A source's own Home (`ProfileRules::feed`): its shelves, titled as it titles them; their songs one
-        // list for taps.
-        PAGE_HOME if core.rules().feed => pages(&client, token, Read::HomeFeed, &|p| {
-            let Page::Feed { v } = p else { return None };
-            Some(json!({ "sections": feed_sections(token, &v) }))
-        }),
+        // "For you", then the library's shelves and the sources' own (their feeds, titled as they title
+        // them) in the order woven; all their songs one list for taps. A jam guest's mixes stay empty.
         PAGE_HOME => {
             let Some(h) = with_session(|s| nori_host::session::Handle::clone(s)) else { return };
             let rows = h.home_rows();
-            // "For you", then the shelves in the order kept; a jam guest's mixes stay empty.
-            let shown: Vec<Value> = std::iter::once(section("mixes", true, Vec::new())).chain(rows.iter().map(|&r| section(shelf_key(r), shelf_grid(r), Vec::new()))).collect();
-            let shown = std::sync::Mutex::new(shown);
-            h.read_home(rows, true, move |r| {
-                let mut v = lock(&shown);
+            let home = Mutex::new((Vec::new(), vec![None; rows.len()], Vec::new(), Vec::new()));
+            h.read_home(rows.clone(), true, move |r| {
+                let mut home = lock(&home);
+                let (mixes, shelves, feed, places) = &mut *home;
                 match r {
-                    Ok(HomePart::Feed(feed)) => return send(token, &json!({ "sections": feed_sections(token, &feed) })),
-                    Ok(HomePart::Mixes(tiles)) => v[0] = section("mixes", true, tiles.iter().map(mix_json).collect()),
-                    Ok(HomePart::Shelf { at, items }) => {
-                        let key = v[at + 1]["key"].as_str().unwrap_or_default().to_string();
-                        v[at + 1] = match items {
-                            ShelfItems::Albums { v: a } => section(&key, true, a.iter().map(album_json).collect()),
-                            ShelfItems::Playlists { v: p } => section(&key, true, p.iter().map(playlist_json).collect()),
-                            ShelfItems::Songs { v: songs } => {
-                                let shelf = songs_section(&key, &songs, 0);
-                                keep_list(token, songs, None);
-                                shelf
-                            }
-                        };
-                    }
+                    Ok(HomePart::Feed(v)) => *feed = v,
+                    Ok(HomePart::Mixes(tiles)) => *mixes = tiles.iter().map(mix_json).collect(),
+                    Ok(HomePart::Shelf { at, items }) => shelves[at] = Some(items),
+                    Ok(HomePart::Places(v)) => *places = v,
                     Err(e) => return send_error(token, &e),
                 }
-                send(token, &json!({ "sections": *v }));
+                let mut songs = Vec::new();
+                let mut sections = vec![section("mixes", true, mixes.clone())];
+                for place in places.iter() {
+                    match *place {
+                        HomePlace::Row { at } => {
+                            let (row, key) = (rows[at as usize], shelf_key(rows[at as usize]));
+                            sections.push(match &shelves[at as usize] {
+                                None => section(key, shelf_grid(row), Vec::new()),
+                                Some(ShelfItems::Albums { v }) => section(key, true, v.iter().map(album_json).collect()),
+                                Some(ShelfItems::Playlists { v }) => section(key, true, v.iter().map(playlist_json).collect()),
+                                Some(ShelfItems::Songs { v }) => {
+                                    let shelf = songs_section(key, v, songs.len());
+                                    songs.extend(v.iter().cloned());
+                                    shelf
+                                }
+                            });
+                        }
+                        HomePlace::Feed { at } => {
+                            let Some(f) = feed.get(at as usize) else { continue };
+                            sections.extend(feed_shelf(f, &mut songs));
+                        }
+                    }
+                }
+                keep_list(token, songs, None);
+                send(token, &json!({ "sections": sections }));
             });
         }
         PAGE_HOME_ROW => {
@@ -826,12 +908,24 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
             })),
             _ => None,
         }),
-        PAGE_PLAYLISTS => pages(&client, token, Read::PlaylistList, &|p| match p {
-            Page::Playlists { v } => Some(json!({
-                "sections": [section("playlists", false, v.iter().map(playlist_json).collect())]
-            })),
-            _ => None,
-        }),
+        // In a profile of several sources, each playlist names the source it is kept in (`on`).
+        PAGE_PLAYLISTS => {
+            let prefs = core.session.settings.current().unwrap_or_default();
+            let several = prefs.active_server().is_some_and(|p| !p.sources.is_empty());
+            let on = |p: &Playlist| nori_core::settings::source_profile(prefs.servers.clone(), prefs.active_server_id.clone(), p.source.clone()).map(|sv| crate::account::label(&sv)).unwrap_or_default();
+            pages(&client, token, Read::PlaylistList, &|page| match page {
+                Page::Playlists { v } => Some(json!({
+                    "sections": [section("playlists", false, v.iter().map(|p| {
+                        let mut row = playlist_json(p);
+                        if several && !p.mixed {
+                            row["on"] = json!(on(p));
+                        }
+                        row
+                    }).collect())]
+                })),
+                _ => None,
+            })
+        }
         // The genres with songs, by name (`Core::genres_listed`).
         PAGE_GENRES => pages(&client, token, Read::GenreList, &|p| match p {
             Page::Genres { v } => Some(json!({
@@ -957,13 +1051,14 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                 send(token, &value);
             }
             // None left: the album's own page, so removing them leaves it open.
-            Ok(None) => album(&client, token, arg.clone()),
+            Ok(None) => album(&client, token, ItemRef::taken(&arg)),
             Err(e) => send_error(token, &e.into()),
         },
-        PAGE_ALBUM => album(&client, token, arg.clone()),
+        PAGE_ALBUM => album(&client, token, ItemRef::taken(&arg)),
         PAGE_ARTIST => {
+            let it = ItemRef::taken(&arg);
             let last = Mutex::new(None);
-            pages(&client, token, Read::ArtistById { id: arg.clone() }, &|p| match p {
+            pages_from(token, &mut |got| nori_core::transport::block_on(client.clone().read_each_artist(it.source.clone(), it.id.clone(), got)), &|p| match p {
                 Page::ArtistPage { v } => {
                     let page = artist_page(token, &v, None);
                     *lock(&last) = Some(v);
@@ -975,7 +1070,7 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
             // artist. A page without it is still the page.
             let Some(v) = last.into_inner().unwrap_or_else(|e| e.into_inner()) else { return };
             let mut about = None;
-            let _ = read_pages(&client, Read::ArtistAbout { id: arg.clone() }, |p| {
+            let _ = read_pages_in(&client, it.source.clone(), Read::ArtistAbout { id: it.id.clone() }, |p| {
                 if let Page::About { v } = p {
                     about = Some(nori_core::pages::ArtistAbout::of(v));
                 }
@@ -984,17 +1079,21 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                 send(token, &artist_page(token, &v, Some(&a)));
             }
         }
-        PAGE_PLAYLIST => pages(&client, token, Read::PlaylistById { id: arg.clone() }, &|p| match p {
+        PAGE_PLAYLIST => {
+            let it = ItemRef::taken(&arg);
+            pages_from(token, &mut |got| nori_core::transport::block_on(client.clone().read_each_playlist(it.id.clone(), it.at(), got)), &|p| match p {
             Page::PlaylistPage { v } => {
                 let pl = &v.playlist;
                 let editable = with_session(|s| {
-                    let user = s.core.session.settings.current().and_then(|p| p.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
-                    playlist_editable(pl, &user, s.rules().playlists)
+                    let prefs = s.core.session.settings.current().unwrap_or_default();
+                    let user = nori_core::settings::source_profile(prefs.servers, prefs.active_server_id, pl.source.clone()).map(|sv| sv.user).unwrap_or_default();
+                    s.client.playlist_editable_in(pl, &user)
                 });
-                keep(List { token, songs: v.songs.clone(), origin: Some(Fetch::Playlist(pl.id.clone()).origin()), editable: editable.unwrap_or(false) });
+                let editable = editable.unwrap_or(false).then(|| pl.clone());
+                keep(List { token, songs: v.songs.clone(), origin: Some(Fetch::Playlist(pl.id.clone(), nori_core::sources::playlist_at(pl)).origin()), editable });
                 Some(json!({
                     "head": {
-                        "k": "playlist", "id": pl.id, "t": pl.name, "s": pl.owner.as_deref().unwrap_or(""),
+                        "k": "playlist", "id": pl.id, "ref": ItemRef::sent(&pl.id, &pl.source, pl.mixed), "t": pl.name, "s": pl.owner.as_deref().unwrap_or(""),
                         "c": cover(&pl.cover_art), "sec": v.seconds, "n": v.songs.len(),
                         "note": pl.comment.as_deref().unwrap_or(""),
                     },
@@ -1002,7 +1101,8 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                 }))
             }
             _ => None,
-        }),
+            });
+        }
         PAGE_QUEUE => {
             let Some(v) = with_session(queue_json) else { return };
             send(token, &v);
@@ -1210,7 +1310,7 @@ fn act_code(a: DownloadAct) -> i32 {
 
 /// Each song of `songs` with whether it is downloaded or on its way, and whether it is downloaded.
 fn download_states(s: &nori_host::session::Session, songs: &[Song]) -> Vec<(bool, bool)> {
-    let ids: Vec<&str> = songs.iter().map(|song| song.id.as_str()).collect();
+    let ids: Vec<nori_core::ItemKey> = songs.iter().map(nori_core::Keyed::key).collect();
     s.download_states(&ids)
         .into_iter()
         .map(|state| match state {
@@ -1257,7 +1357,7 @@ fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32, playlist:
         1 => picked(|(here, _)| !here),
         2 => {
             let done = picked(|(_, done)| *done);
-            done.iter().for_each(|song| s.download_remove(&song.id));
+            done.iter().for_each(|song| s.download_remove(&nori_core::Keyed::key(song)));
             return done.len() as i32;
         }
         _ => return 0,
@@ -1270,29 +1370,25 @@ fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32, playlist:
     n
 }
 
-/// The songs of album, playlist or artist `id` (`kind` as in [`nori_ios_read`]): the stored copy, then
-/// the server's; offline the stored one alone.
-fn collection_songs(core: &nori_core::Core, client: &nori_core::client::Client, kind: i32, id: String) -> Vec<Song> {
-    let mut songs = Vec::new();
-    match kind {
-        PAGE_DOWNLOADED_ALBUM => return core.downloaded_album(id).ok().flatten().map(|a| a.songs).unwrap_or_default(),
-        PAGE_ARTIST => return nori_core::transport::block_on(client.artist_songs_of(id)).unwrap_or_default(),
-        PAGE_ALBUM => {
-            let _ = read_pages(client, Read::AlbumById { id }, |p| {
-                if let Page::AlbumPage { v } = p {
-                    songs = v.songs;
-                }
-            });
-        }
-        PAGE_PLAYLIST => {
-            let _ = read_pages(client, Read::PlaylistById { id }, |p| {
-                if let Page::PlaylistPage { v } = p {
-                    songs = v.songs;
-                }
-            });
-        }
-        _ => {}
+/// The songs of album, playlist or artist `id` (its item's `ref`; `kind` as in [`nori_ios_read`]), each
+/// saying its source: the stored copy, then the source's; offline the stored one alone.
+fn collection_songs(core: &nori_core::Core, client: &Arc<nori_core::client::Client>, kind: i32, id: String) -> Vec<Song> {
+    if kind == PAGE_DOWNLOADED_ALBUM {
+        return core.downloaded_album(id).ok().flatten().map(|a| a.songs).unwrap_or_default();
     }
+    let it = ItemRef::taken(&id);
+    let mut songs = Vec::new();
+    let mut take = |p: Page| match p {
+        Page::AlbumPage { v } => songs = v.songs,
+        Page::PlaylistPage { v } => songs = v.songs,
+        _ => {}
+    };
+    let _ = match kind {
+        PAGE_ARTIST => return fetch(kind, id).map(|f| nori_core::transport::block_on(f.songs(client)).unwrap_or_default()).unwrap_or_default(),
+        PAGE_ALBUM => nori_host::session::read_pages_in(client, it.source.clone(), Read::AlbumById { id: it.id }, &mut take),
+        PAGE_PLAYLIST => nori_core::transport::block_on(client.clone().read_each_playlist(it.id.clone(), it.at(), &mut take)),
+        _ => Ok(()),
+    };
     songs
 }
 
@@ -1450,15 +1546,21 @@ pub unsafe extern "C" fn nori_ios_collection_download_act(kind: i32, id: *const 
     let id = c_text(id);
     let Some((client, core)) = server() else { return 0 };
     let songs = collection_songs(&core, &client, kind, id.clone());
-    with_session(|s| act_on(s, songs, act, (kind == PAGE_PLAYLIST).then_some(id))).unwrap_or(0)
+    // A playlist of the profile's own source is kept downloaded as it changes.
+    let kept = Some(ItemRef::taken(&id)).filter(|it| kind == PAGE_PLAYLIST && it.at() == nori_core::sources::PlaylistAt::Source { source: None }).map(|it| it.id);
+    with_session(|s| act_on(s, songs, act, kept)).unwrap_or(0)
 }
 
+/// What album, artist or playlist `id` (its item's `ref`) plays, `kind` as in [`nori_ios_read`].
 fn fetch(kind: i32, id: String) -> Option<Fetch> {
+    if kind == PAGE_DOWNLOADED_ALBUM {
+        return Some(Fetch::DownloadedAlbum(id));
+    }
+    let it = ItemRef::taken(&id);
     match kind {
-        PAGE_DOWNLOADED_ALBUM => Some(Fetch::DownloadedAlbum(id)),
-        PAGE_ALBUM => Some(Fetch::Album(id)),
-        PAGE_ARTIST => Some(Fetch::Artist(id)),
-        PAGE_PLAYLIST => Some(Fetch::Playlist(id)),
+        PAGE_ALBUM => Some(Fetch::Album(it.id, it.source)),
+        PAGE_ARTIST => Some(Fetch::Artist(it.id, it.source)),
+        PAGE_PLAYLIST => Some(Fetch::Playlist(it.id.clone(), it.at())),
         _ => None,
     }
 }
@@ -1493,17 +1595,17 @@ fn starrable(kind: i32) -> Option<Starrable> {
     }
 }
 
-/// Stars (`on` 1) or unstars a song (1), album (2) or artist (3).
+/// Stars (`on` 1) or unstars a song (1), album (2) or artist (3), `id` its item's `ref`, in its source.
 ///
 /// # Safety
 /// `id` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_star(kind: i32, id: *const c_char, on: i32) {
     let Some(kind) = starrable(kind) else { return };
-    let id = c_text(id);
+    let it = ItemRef::taken(&c_text(id));
     with_session(|s| match kind {
-        Starrable::Song => s.star_song(id, on != 0, s.elsewhere().as_ref()),
-        _ => s.star(kind, id, on != 0),
+        Starrable::Song => s.star_song(nori_core::ItemKey { source: it.source, id: it.id }, on != 0, s.elsewhere().as_ref()),
+        _ => s.star(it.source, kind, it.id, on != 0),
     });
 }
 
@@ -1515,10 +1617,10 @@ pub unsafe extern "C" fn nori_ios_star(kind: i32, id: *const c_char, on: i32) {
 /// `id` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_starred(kind: i32, id: *const c_char, listed: i32) -> i32 {
-    let (Some(kind), id, listed) = (starrable(kind), c_text(id), listed != 0) else { return listed };
+    let (Some(kind), it, listed) = (starrable(kind), ItemRef::taken(&c_text(id)), listed != 0) else { return listed };
     let shown = with_session(|s| match kind {
-        Starrable::Song => s.song_starred(&id, listed),
-        _ => s.core.starred(kind, &id, listed),
+        Starrable::Song => s.song_starred(&nori_core::ItemKey { source: it.source.clone(), id: it.id.clone() }, listed),
+        _ => s.core.starred_in(it.source.clone(), kind, &it.id, listed),
     });
     i32::from(shown.unwrap_or(listed))
 }
@@ -1667,8 +1769,8 @@ pub(crate) fn warm_around(s: &nori_host::session::Session, index: usize) {
         let rules = nori_core::covers::cover_rules();
         [rules.row, rules.full].map(|size| (id.clone(), size))
     });
-    for (id, size) in current.chain(around.wants.into_iter().map(|w| (w.id, w.size))) {
-        loader.warm(&s.core.cover_address(id, size));
+    for url in current.chain(around.wants.into_iter().map(|w| (w.id, w.size))).filter_map(|(id, size)| s.core.cover_address(id, size)) {
+        loader.warm(&url);
     }
 }
 
@@ -1685,7 +1787,7 @@ pub extern "C" fn nori_ios_cover_cancel(token: u64) {
 }
 
 /// The words the session's lyrics view shows for `song`, if they are its.
-pub(crate) fn held_lyrics(song: &str) -> Option<Lyrics> {
+pub(crate) fn held_lyrics(song: &nori_core::ItemKey) -> Option<Lyrics> {
     with_session(|s| s.lyrics_now().words_of(song).map(|p| p.lyrics.clone())).flatten()
 }
 
@@ -1700,7 +1802,7 @@ pub unsafe extern "C" fn nori_ios_lyrics(song: *const c_char) {
         return;
     }
     with_session(|s| {
-        s.lyrics_heard(Some(song));
+        s.lyrics_heard(Some(nori_core::ItemKey::from_text(&song)));
         s.lyrics_view(true);
     });
 }
@@ -1718,8 +1820,8 @@ pub extern "C" fn nori_ios_lyrics_closed() {
 /// `song` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_char {
-    let song = c_text(song);
-    let Some(now) = with_session(|s| s.lyrics_now()).filter(|n| n.song() == Some(song.as_str())) else {
+    let song = nori_core::ItemKey::from_text(&c_text(song));
+    let Some(now) = with_session(|s| s.lyrics_now()).filter(|n| n.song() == Some(&song)) else {
         return std::ptr::null_mut();
     };
     let failed = Lyrics::default();
@@ -1733,7 +1835,7 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
         .iter()
         .map(|line| json!({ "s": line.start_ms, "e": line.end_ms, "t": line.text, "b": line.backing }))
         .collect();
-    owned(&json!({ "id": song, "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
+    owned(&json!({ "id": song.text(), "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
 }
 
 /// A long list's orders as JSON to free: `now` the one it is in, `all` every one in the menu's order
@@ -2108,6 +2210,7 @@ pub extern "C" fn nori_ios_facts() -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nori_core::ItemKey;
 
     fn song(id: &str) -> Song {
         Song {
@@ -2234,17 +2337,31 @@ mod tests {
         assert!(list(91).is_none());
     }
 
+    /// An item of another source, or a playlist of nori's own, crosses to the app as a ref that comes
+    /// back whole; one of the profile's own source as its bare id, as before.
+    #[test]
+    fn an_item_crosses_with_where_it_is_kept() {
+        let theirs = Album { id: "al".into(), source: Some("yt".into()), ..Album::default() };
+        let sent = album_json(&theirs)["ref"].as_str().unwrap().to_string();
+        assert_eq!(ItemRef::taken(&sent), ItemRef { id: "al".into(), source: Some("yt".into()), mixed: false });
+        let mine = Playlist { id: "3".into(), mixed: true, ..Playlist::default() };
+        assert_eq!(ItemRef::taken(playlist_json(&mine)["ref"].as_str().unwrap()).at(), nori_core::sources::PlaylistAt::Device);
+        assert_eq!(album_json(&Album { id: "al".into(), ..Album::default() })["ref"], "al", "the profile's own: its id");
+        assert_eq!(ItemRef::taken("al"), ItemRef { id: "al".into(), ..ItemRef::default() });
+    }
+
     #[test]
     fn only_an_own_playlists_rows_move_and_go() {
         let _turn = lock(&ABI_IN_USE);
         forget_lists();
         let origin = Some(PageOrigin::new(OriginKind::Playlist, "p1"));
-        keep(List { token: 70, songs: vec![song("a"), song("b")], origin: origin.clone(), editable: true });
-        keep(List { token: 71, songs: vec![song("a"), song("b")], origin, editable: false });
+        keep(List { token: 70, songs: vec![song("a"), song("b")], origin: origin.clone(), editable: Some(Playlist { id: "p".into(), ..Playlist::default() }) });
+        keep(List { token: 71, songs: vec![song("a"), song("b")], origin, editable: None });
         assert_eq!(list_edits(70, 0), [PlaylistEdit::MoveDown, PlaylistEdit::Remove]);
-        assert_eq!(list_edit_write(70, 0, PlaylistEdit::MoveDown), Some(Write::ReplacePlaylist { id: "p1".into(), song_ids: vec!["b".into(), "a".into()] }));
+        let change = nori_host::session::PlaylistChange::Edit { songs: vec!["a".into(), "b".into()], index: 0, edit: PlaylistEdit::MoveDown };
+        assert_eq!(list_edit(70, 0, PlaylistEdit::MoveDown), Some((Playlist { id: "p".into(), ..Playlist::default() }, change)));
         assert_eq!(list_edits(71, 0), []);
-        assert_eq!(list_edit_write(71, 0, PlaylistEdit::Remove), None, "another's playlist asks for no write");
+        assert_eq!(list_edit(71, 0, PlaylistEdit::Remove), None, "another's playlist changes nothing");
     }
 
     #[test]
@@ -2376,7 +2493,7 @@ mod tests {
     fn a_running_download_carries_its_progress_and_a_waiting_one_none() {
         let core = nori_core::Core::new(String::new(), "t".into(), Default::default()).unwrap();
         core.transfers().with(|t| {
-            let slot = t.open("a", 0);
+            let slot = t.open(&ItemKey::own("a"), 0);
             t.note(slot, 1000, 450, 1_000);
         });
         let mut rows = songs_section("active", &[song("a"), song("b")], 0);

@@ -279,7 +279,7 @@ mod native {
     impl Remote {
         /// Whether this profile pairs device by device: one without a server account, not a jam guest's.
         fn pairs(&self) -> bool {
-            self.me.kind != DeviceKind::Guest && shared_key(&self.client).is_none() && self.client.core.serverless()
+            self.me.kind != DeviceKind::Guest && shared_key(&self.client).is_none() && self.client.core.lan_only()
         }
 
         /// Keeps a device paired now, shows it, and looks for doors again: the paired device's door, seen

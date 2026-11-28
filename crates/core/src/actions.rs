@@ -5,13 +5,15 @@ use crate::autofill::seed_now;
 use futures_util::StreamExt;
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult};
-use crate::{m3u, Album, Core, Result, Song};
+use crate::{m3u, Album, Core, ItemKey, Keyed, Result, Song};
 
 pub use nori_queue::actions::*;
 
 impl Client {
+    /// Song `id` of this client's source as the queue or the downloads keep it.
     pub(crate) fn stored_song_of(&self, id: &str) -> Option<Song> {
-        self.core.session.song(id).or_else(|| self.core.download_song(id))
+        let key = ItemKey::own(id);
+        self.core.session.song(&key).or_else(|| self.core.download_song(&key))
     }
 
     /// Song `id` from the queue store, else the downloads, else the cache or server.
@@ -31,7 +33,7 @@ impl Client {
         let mut out = Vec::new();
         let mut found = 0;
         for a in albums.into_iter().filter(|a| !a.is_provider()) {
-            let mut songs: Vec<Song> = self.songs(Read::AlbumSongs { id: a.id }).await.unwrap_or_default();
+            let mut songs: Vec<Song> = self.album_songs_keyed(&a.key()).await.unwrap_or_default();
             songs.retain(|s| !s.is_provider());
             if songs.is_empty() {
                 continue;
@@ -55,11 +57,11 @@ impl Client {
 
 impl Core {
     /// The finished download `id`, as stored.
-    pub fn download_song(&self, id: &str) -> Option<Song> {
+    pub fn download_song(&self, id: &ItemKey) -> Option<Song> {
         use rusqlite::OptionalExtension;
         let c = self.db.lock();
-        let sql = format!("SELECT {} FROM downloads i WHERE server=sid() AND id=?1 AND done=1", crate::db::items::SONG);
-        let song = c.prepare_cached(&sql).ok()?.query_row([id], |r| crate::db::items::song(r, 0)).optional().ok()?;
+        let sql = format!(concat!("SELECT {} FROM downloads i WHERE ", crate::db::of_key!(), " AND done=1"), crate::db::items::SONG);
+        let song = c.prepare_cached(&sql).ok()?.query_row(crate::db::key_params(id), |r| crate::db::items::song(r, 0)).optional().ok()?;
         song
     }
 
@@ -175,7 +177,7 @@ pub(crate) mod tests {
         let near = |id: &str| Song { id: id.into(), genre: Some("Jazz".into()), year: 1960, ..Default::default() };
         let songs = [near("seed"), near("a"), near("left-out")];
         db::index(&mut c.core.db.lock(), &[], &[], &songs).unwrap();
-        c.core.mix_excluded_set("left-out".into(), true).unwrap();
+        c.core.mix_excluded_set(ItemKey::own("left-out"), true).unwrap();
         fake.answer(&songs_json("similarSongs2", &["srv", "left-out"]));
         let got = block(c.radio("seed".into())).unwrap();
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["seed", "a", "srv"]);

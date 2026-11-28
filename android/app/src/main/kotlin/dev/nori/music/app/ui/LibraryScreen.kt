@@ -287,7 +287,7 @@ private fun AlbumGrid(vm: AlbumsViewModel, albums: List<dev.nori.music.ffi.model
         // which is the point of a grid of covers) and the row takes as many as fit.
         val wide = LocalWide.current
         LazyVerticalGrid(if (wide) GridCells.Adaptive(GRID_MIN) else GridCells.Fixed(2), Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP)) {
-            items(albums, key = { it.id }, contentType = { "album" }) { a ->
+            items(albums, key = { it.rowKey }, contentType = { "album" }) { a ->
                 AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
             }
         }
@@ -305,7 +305,7 @@ private fun ArtistRows(vm: AlbumsViewModel) {
     val list = rememberLazyListState()
     LaunchedEffect(list, rows.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= rows.size - 8 }.collect { if (it) vm.loadMore() } }
     LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current)) {
-        items(rows, key = { it.first().id }, contentType = { "artist" }) { row ->
+        items(rows, key = { it.first().rowKey }, contentType = { "artist" }) { row ->
             val first = row.first()
             val artist = first.artistId
             val cardMenu = LocalCardMenu.current
@@ -337,9 +337,9 @@ private fun ArtistRows(vm: AlbumsViewModel) {
                     )
                 }
                 LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(row, key = { it.id }, contentType = { "cover" }) { a ->
+                    items(row, key = { it.rowKey }, contentType = { "cover" }) { a ->
                         val cardMenu = LocalCardMenu.current
-                        CoverCard(a.name, if (a.year > 0u) "${a.year}" else "", vm.cover(a.coverArt, CoverSize.CARD), ARTIST_COVER, { nav.album(a.id, a) }, itemMotion(), remote = a.isExternal, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfAlbum(a)) })
+                        CoverCard(a.name, if (a.year > 0u) "${a.year}" else "", vm.cover(a.coverArt, CoverSize.CARD), ARTIST_COVER, { nav.album(a.id, a) }, itemMotion(), remote = a.isExternal, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfAlbum(a)) }, mark = marked(a.sourceMarked, a.source))
                     }
                 }
             }
@@ -362,11 +362,11 @@ private fun Artists(vm: ArtistsViewModel = viewModel()) {
         Column {
             field()
             LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-                items(artists, key = { it.id }, contentType = { "artist" }) { a ->
+                items(artists, key = { it.rowKey }, contentType = { "artist" }) { a ->
                     val cardMenu = LocalCardMenu.current
                     Column {
                         Row(Modifier.fillMaxWidth().combinedClickable(onClick = { nav.artist(a.id, a) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) }).padding(horizontal = Space.gutter, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Cover(vm.cover(a.coverArt, CoverSize.ROW), 48.dp, radius = 24.dp)
+                            Cover(vm.cover(a.coverArt, CoverSize.ROW), 48.dp, radius = 24.dp, mark = marked(a.sourceMarked, a.source))
                             Column(Modifier.padding(start = 12.dp)) {
                                 Text(a.name, style = MaterialTheme.typography.bodyLarge)
                                 a.albumCount?.let { n -> Text(remember(n) { say.albums(n.toInt()) }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -468,13 +468,13 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
         LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { tools() }
             if (playlists.isEmpty()) item { EmptyNote(Note.NO_PLAYLISTS) }
-            items(playlists, key = { it.id }) { p ->
+            items(playlists, key = { it.rowKey }) { p ->
                 val cardMenu = LocalCardMenu.current
                 val menu = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) }
                 NavRow(
                     p.name, { nav.playlist(p.id, p) }, onLongClick = menu,
                     subtitle = remember(p.songCount, p.duration) { say.listCaption(p.songCount.toInt(), p.duration.toLong()).ifEmpty { null } },
-                    leading = { Cover(vm.cover(p.coverArt, CoverSize.ROW), 48.dp) },
+                    leading = { Cover(vm.cover(p.coverArt, CoverSize.ROW), 48.dp, mark = marked(p.sourceMarked, p.source)) },
                     action = { IconButton(menu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
@@ -500,14 +500,14 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
             }
             if (s.albums.isNotEmpty()) item(key = "albums") {
                 LazyRow(Modifier.bleedsToEdges(), rememberShelfState(s.albums.firstOrNull()?.id), contentPadding = edgePadding(Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(s.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { nav.album(a.id, a) }, itemMotion()) }
+                    items(s.albums, key = { it.rowKey }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { nav.album(a.id, a) }, itemMotion()) }
                 }
             }
-            items(s.artists, key = { "ar" + it.id }) { a ->
+            items(s.artists, key = { "ar" + it.rowKey }) { a ->
                 val cardMenu = LocalCardMenu.current
                 NavRow(
                     a.name, { nav.artist(a.id, a) }, chevron = true, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) },
-                    leading = { Cover(vm.cover(a.coverArt, CoverSize.ROW), 44.dp, radius = 22.dp) },
+                    leading = { Cover(vm.cover(a.coverArt, CoverSize.ROW), 44.dp, radius = 22.dp, mark = marked(a.sourceMarked, a.source)) },
                 )
             }
             songRows(s.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) })
@@ -589,7 +589,7 @@ private fun Downloads(actions: ActionsViewModel) {
         // Until the songs are read there is nothing to say, not "nothing downloaded" for a frame.
         val library = done
         if (library != null && library.albums.isEmpty() && library.songs.isEmpty()) item { EmptyNote(Note.NOTHING_DOWNLOADED) }
-        items(library?.albums.orEmpty().chunked(2), key = { it.first().id }, contentType = { "albums" }) { row ->
+        items(library?.albums.orEmpty().chunked(2), key = { it.first().rowKey }, contentType = { "albums" }) { row ->
             Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { album ->
                     AlbumCard(album, actions.cover(album.coverArt, CoverSize.CARD), 132.dp, { nav.downloadedAlbum(album.id, album) }, Modifier.weight(1f), fill = true, menu = false)

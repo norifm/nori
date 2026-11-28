@@ -34,6 +34,32 @@ pub fn provider_of(kinds: &nori_core::providers::Kinds, kind: &ServerKind) -> Pr
     provider(kind, kinds.plugin_name(kind.clone(), "en".into()))
 }
 
+/// What a saved profile is called: its name or address, else its provider's name.
+pub fn profile_label(sv: &nori_core::settings::SavedServer, kinds: &nori_core::providers::Kinds) -> String {
+    Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| provider_of(kinds, &sv.kind).name)
+}
+
+/// What the profile's source `source` is called (None: the profile's own).
+pub fn source_name(prefs: &nori_core::settings::StoredPrefs, kinds: &nori_core::providers::Kinds, source: &Option<String>) -> String {
+    nori_core::settings::source_profile(prefs.servers.clone(), prefs.active_server_id.clone(), source.clone()).map(|sv| profile_label(&sv, kinds)).unwrap_or_default()
+}
+
+/// A row's tag for the profile's source `source` (None: the profile's own): its profile's letter.
+pub fn source_tag(prefs: &nori_core::settings::StoredPrefs, kinds: &nori_core::providers::Kinds, source: &Option<String>) -> String {
+    let letter = nori_core::settings::source_profile(prefs.servers.clone(), prefs.active_server_id.clone(), source.clone()).map(|sv| {
+        let label = profile_label(&sv, kinds);
+        nori_core::settings::profile_letter(sv, label)
+    });
+    format!("‹{}›", letter.unwrap_or_default())
+}
+
+/// Why a playlist did not take some songs.
+pub fn playlist_refused(name: &str, why: &nori_core::menus::PlaylistRefusal, source_name: impl Fn(&Option<String>) -> String) -> String {
+    match why {
+        nori_core::menus::PlaylistRefusal::OtherSource { source } => format!("{name} is on {}, so it takes only songs from there", source_name(source)),
+    }
+}
+
 /// How a sign-in to a profile of the kind called `name` went.
 pub fn sign_in(name: &str, r: &SignInResult) -> String {
     match r {
@@ -841,7 +867,7 @@ pub fn album_caption(d: &AlbumDetail) -> String {
 
 /// An artist page's caption: "14 releases · 162 songs", or its songs where it lists no albums.
 pub fn artist_caption(d: &nori_core::ArtistDetail) -> String {
-    let songs: u32 = d.albums.iter().map(|a| a.song_count).sum();
+    let songs = d.release_songs.unwrap_or_default();
     let mut parts = Vec::with_capacity(2);
     if !d.albums.is_empty() {
         parts.push(count(d.albums.len() as u64, "release", "releases"));
@@ -1126,7 +1152,7 @@ pub mod hints {
     pub const PLUGIN_BROWSER: Hints = &[("enter", "open"), ("/", "search"), ("← →", "repo"), ("esc", "back"), ("?", "keys")];
     pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("e", "rename"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
-    pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("m", "scrobbling"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
+    pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("a", "sources"), ("m", "scrobbling"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
     pub const SUPPORT: Hints = &[("↑ ↓", "choose"), ("← →", "change"), ("enter", "type, pick or give"), ("R", "ask again"), ("esc", "back"), ("?", "keys")];
     pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
     pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
@@ -1160,9 +1186,13 @@ pub const SAVE_AS_PLAYLIST: &str = "Save as playlist";
 pub const NEW_PLAYLIST: &str = "New playlist";
 
 /// A playlist the picker offers: its name and what it has of the `asked` songs (its song count when none).
-pub fn playlist_choice(c: &nori_core::menus::PlaylistChoice, asked: usize) -> String {
+pub fn playlist_choice(c: &nori_core::menus::PlaylistChoice, asked: usize, source_name: impl Fn(&Option<String>) -> String) -> String {
     let asked = asked as u32;
-    let holds = match c.holds {
+    let holds = match (&c.refused, c.holds) {
+        (Some(nori_core::menus::PlaylistRefusal::OtherSource { source }), _) => return format!("{} · only songs from {}", c.playlist.name, source_name(source)),
+        (None, holds) => holds,
+    };
+    let holds = match holds {
         0 => count(c.playlist.song_count as u64, "song", "songs"),
         h if h == asked && asked == 1 => "has it ✓".into(),
         h if h == asked => format!("has all {asked} ✓"),

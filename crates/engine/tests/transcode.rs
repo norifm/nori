@@ -1,6 +1,7 @@
 //! Opus transcodes from a server that behaves as Navidrome does, over the test's own core: songs play
 //! to their real end, and a cached copy cut short is fetched anew instead of played cut.
 
+use nori_core::ItemKey;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::sync::Arc;
@@ -125,7 +126,7 @@ impl Rig {
         let prefs = core.session.settings.current().unwrap();
         let store = store.then(|| Store::open(dir.join("music"), 256 << 20).unwrap());
         core.session.register(["a", "b"].map(|id| Song { id: id.into(), title: id.into(), duration: if id == "a" { A_SECS } else { 5 }, suffix: "mp3".into(), ..Default::default() }).to_vec());
-        core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
+        core.session.set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(0), false, None);
         let analyses = Analyses::of(client.clone());
         let library = CoreLibrary { analyses: analyses.clone(), client, bytes, store: store.clone() };
         let card = Card::new();
@@ -146,10 +147,10 @@ impl Rig {
     fn play_a_then(&self, from_ms: i64, then: impl FnOnce()) -> f64 {
         let (before, seen) = (self.card.heard.lock().len(), self.events.lock().len());
         self.engine.play_at(0, from_ms);
-        let a = |e: &Event| matches!(e, Event::Song { id, .. } if id == "a");
+        let a = |e: &Event| matches!(e, Event::Song { id, .. } if id.id == "a");
         assert!(self.time.until(Duration::from_secs(10), || self.events.lock().iter().skip(seen).any(a)), "a came: {:?}", self.events.lock());
         then();
-        let b = |e: &Event| matches!(e, Event::Song { id, .. } if id == "b");
+        let b = |e: &Event| matches!(e, Event::Song { id, .. } if id.id == "b");
         assert!(self.time.until(Duration::from_secs(A_SECS as u64 + 30), || self.events.lock().iter().skip(seen).any(b)), "b came: {:?}", self.events.lock());
         let failed: Vec<Event> = self.events.lock().iter().filter(|e| matches!(e, Event::Error { .. } | Event::Stopped { .. })).cloned().collect();
         assert!(failed.is_empty(), "{failed:?}");

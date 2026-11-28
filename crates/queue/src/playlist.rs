@@ -1,7 +1,7 @@
 //! The app's queue (`nori_player::playlist::Playlist`). Every change is made here first; the platform's
 //! player mirrors it from the returned [`QueueChange`] / [`QueueEdit`].
 
-use nori_model::{PageOrigin, Song};
+use nori_model::{ItemKey, PageOrigin, Song};
 use nori_player::playlist::{Playlist, Splice, REPEAT_ALL, REPEAT_ONE};
 
 // Public so the uniffi scaffolding can name them.
@@ -15,7 +15,7 @@ use crate::{queue, Session};
 pub(crate) struct Queue {
     pub(crate) list: Playlist,
     /// The planner window last handed over and whether shuffling, to skip unchanged ones.
-    window: (Vec<String>, bool),
+    window: (Vec<ItemKey>, bool),
     /// The page the queue was started from; kept through edits, replaced by each new queue.
     origin: Option<PageOrigin>,
     /// Bumped by each new queue, so pages re-check [`playlist_from`] only then.
@@ -76,8 +76,8 @@ pub struct BridgeState {
     pub bridging: bool,
     pub next_is_parked: bool,
     /// The song resumed once the server is back.
-    pub parked: Option<String>,
-    pub current: Option<String>,
+    pub parked: Option<ItemKey>,
+    pub current: Option<ItemKey>,
 }
 
 #[cfg(feature = "ffi")]
@@ -129,9 +129,9 @@ pub(crate) fn walk_repeat(p: &Playlist) -> u8 {
 
 /// A song of a list and its neighbours in play order, as ReplayGain reads them.
 struct Around {
-    before: Option<String>,
-    song: String,
-    after: Option<String>,
+    before: Option<ItemKey>,
+    song: ItemKey,
+    after: Option<ItemKey>,
     shuffling: bool,
 }
 
@@ -239,7 +239,7 @@ impl Session {
     }
 
     /// Up to `n` upcoming ids in play order, the current one first.
-    pub fn upcoming(&self, n: u32) -> Vec<String> {
+    pub fn upcoming(&self, n: u32) -> Vec<ItemKey> {
         self.playlist(|p| p.upcoming().take(n as usize).map(|i| p.ids()[i].clone()).collect())
     }
 
@@ -297,7 +297,7 @@ impl Session {
             (ids, view)
         });
         if !ids.is_empty() {
-            view.songs = self.songs(ids);
+            view.songs = nori_library::merged::marked(self.songs(ids));
         }
         view
     }
@@ -307,23 +307,25 @@ impl Session {
         self.playlist(|p| p.rev())
     }
 
-    /// The ids to save as the server's play queue: radio streams left out, empty while the profile doesn't tell its server what plays.
+    /// The ids to save as the server's play queue: its own songs, radio streams left out; empty while the
+    /// profile doesn't tell its server what plays.
     pub fn to_push(&self) -> Vec<String> {
         if self.settings.in_effect(|p| p.active_server().is_some_and(|s| s.scrobble_off)) {
             return Vec::new();
         }
-        self.playlist(|p| p.ids().iter().filter(|id| !queue::is_radio(id)).cloned().collect())
+        self.playlist(|p| p.ids().iter().filter_map(ItemKey::own_id).filter(|id| !queue::is_radio(id)).map(str::to_string).collect())
     }
 
     /// The server write saving the play queue at `current`/`position_ms`; None when there is nothing to save.
-    pub fn push_write(&self, current: Option<String>, position_ms: i64) -> Option<nori_net::requests::Write> {
+    pub fn push_write(&self, current: Option<&ItemKey>, position_ms: i64) -> Option<nori_net::requests::Write> {
         let ids = self.to_push();
+        let current = current.and_then(ItemKey::own_id).map(str::to_string);
         (!ids.is_empty()).then_some(nori_net::requests::Write::SaveQueue { ids, current, position_ms })
     }
 
     /// The current id and all queued ids.
-    pub fn snapshot(&self) -> (Option<String>, Vec<String>) {
-        self.playlist(|p| (p.current_id().map(str::to_string), p.ids().to_vec()))
+    pub fn snapshot(&self) -> (Option<ItemKey>, Vec<ItemKey>) {
+        self.playlist(|p| (p.current_id().cloned(), p.ids().to_vec()))
     }
 }
 
@@ -364,12 +366,12 @@ impl Session {
 
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_bridge_state"))]
     pub fn bridge_state(&self) -> BridgeState {
-        self.playlist(|p| BridgeState { bridging: p.bridging(), next_is_parked: p.next_is_parked(), parked: p.parked_id().map(str::to_string), current: p.current_id().map(str::to_string) })
+        self.playlist(|p| BridgeState { bridging: p.bridging(), next_is_parked: p.next_is_parked(), parked: p.parked_id().cloned(), current: p.current_id().cloned() })
     }
 
     /// Sets a new queue starting at `start` (None: wherever shuffle starts), from page `origin`.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set"))]
-    pub fn set(&self, ids: Vec<String>, start: Option<u32>, shuffle: bool, origin: Option<PageOrigin>) -> QueueChange {
+    pub fn set(&self, ids: Vec<ItemKey>, start: Option<u32>, shuffle: bool, origin: Option<PageOrigin>) -> QueueChange {
         let mut q = self.queue.lock();
         q.set_origin(origin, ids.len());
         let at = q.list.set(ids, start.map(|s| s as usize), shuffle, seed());
@@ -381,7 +383,7 @@ impl Session {
     /// index `start` (None: the order's first song). Shuffle off then plays the list in order from the song
     /// playing.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set_shuffled"))]
-    pub fn set_shuffled(&self, ids: Vec<String>, order: Vec<u32>, start: Option<u32>, origin: Option<PageOrigin>) -> QueueChange {
+    pub fn set_shuffled(&self, ids: Vec<ItemKey>, order: Vec<u32>, start: Option<u32>, origin: Option<PageOrigin>) -> QueueChange {
         let mut q = self.queue.lock();
         q.set_origin(origin, ids.len());
         let start = start.or(order.first().copied()).map_or(0, |i| i as usize);
@@ -393,7 +395,7 @@ impl Session {
     /// A queue handed over from another device: from list index `index`, under `shuffle` in `order`
     /// (shuffled here, from wherever that starts, when there is none), repeating as `repeat` says.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_handed"))]
-    pub fn handed(&self, ids: Vec<String>, index: u32, order: Option<Vec<u32>>, shuffle: bool, repeat: u8) -> QueueChange {
+    pub fn handed(&self, ids: Vec<ItemKey>, index: u32, order: Option<Vec<u32>>, shuffle: bool, repeat: u8) -> QueueChange {
         let mut q = self.queue.lock();
         q.set_origin(None, ids.len());
         let at = match (shuffle, order) {
@@ -408,7 +410,7 @@ impl Session {
     /// Inserts songs near `at`, each marked with how it was added (`hands`); `Playlist::take` picks the
     /// spot.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_take"))]
-    pub fn take(&self, at: u32, ids: Vec<String>, hands: Vec<Hand>) -> QueueChange {
+    pub fn take(&self, at: u32, ids: Vec<ItemKey>, hands: Vec<Hand>) -> QueueChange {
         self.edit(|p| Some(p.take(at as usize, ids, &hands)))
     }
 
@@ -423,7 +425,7 @@ impl Session {
     /// [`crate::undo::UNDO_MS`] ago (same index, shuffle turn and hand). `at` is None when it is not;
     /// the caller then inserts it itself.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_restore"))]
-    pub fn restore(&self, id: String) -> QueueChange {
+    pub fn restore(&self, id: ItemKey) -> QueueChange {
         self.restore_at(&id, nori_db::now_ms())
     }
 
@@ -498,7 +500,7 @@ impl Session {
     /// its play `order` (the list order if `order` is not a permutation). Songs are always sent;
     /// `list_rev` 0 and `rev` `u64::MAX` keep readers from mistaking it for the core's list.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_view_of"))]
-    pub fn view_of(&self, ids: Vec<String>, hands: Vec<Hand>, order: Vec<u32>) -> PlaylistView {
+    pub fn view_of(&self, ids: Vec<ItemKey>, hands: Vec<Hand>, order: Vec<u32>) -> PlaylistView {
         let len = ids.len();
         let mut seen = vec![false; len];
         let permutation = order.len() == len && order.iter().all(|&i| seen.get_mut(i as usize).is_some_and(|s| !std::mem::replace(s, true)));
@@ -518,15 +520,20 @@ pub(crate) mod tests {
     /// A session playing `ids` from `start`.
     pub(crate) fn session(ids: &[&str], start: u32) -> Session {
         let s = Session::default();
-        s.set(ids.iter().map(|s| s.to_string()).collect(), Some(start), false, None);
+        s.set(ids.iter().map(|s| ItemKey::own(*s)).collect(), Some(start), false, None);
         s
     }
 
-    fn ids(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
+    pub(crate) fn ids(v: &[&str]) -> Vec<ItemKey> {
+        v.iter().map(|s| ItemKey::own(*s)).collect()
     }
 
-    fn window_ids(s: &Session) -> Vec<String> {
+    /// The ids of `keys`, all of the profile's own source.
+    pub(crate) fn plain(keys: Vec<ItemKey>) -> Vec<String> {
+        keys.into_iter().map(|k| k.id).collect()
+    }
+
+    fn window_ids(s: &Session) -> Vec<ItemKey> {
         s.queue.lock().window.0.clone()
     }
 
@@ -651,7 +658,7 @@ pub(crate) mod tests {
         assert_ne!(s.origin_gen(), gen);
         assert!(lights(&album) && !lights(&playlist));
         s.set(ids(&["t1", "t2", "t3"]), Some(2), false, Some(album.clone()));
-        assert_eq!(s.playlist(|p| p.current_id().map(str::to_string)), Some("t3".into()));
+        assert_eq!(s.playlist(|p| p.current_id().map(|k| k.id.clone())), Some("t3".into()));
         // Edits keep the origin.
         s.take(3, ids(&["auto1", "auto2"]), vec![Hand::No; 2]);
         s.take(9, ids(&["mine"]), vec![Hand::Next]);
@@ -721,41 +728,41 @@ pub(crate) mod tests {
         s.take(9, ids(&["mine"]), vec![Hand::Next]);
         assert_eq!(s.playlist(|p| p.ids().to_vec()), ids(&["u1", "u2", "mine", "u3", "u4"]));
         s.remove(2, 3);
-        assert_eq!(s.restore("other".into()).at, None);
-        assert_eq!(s.restore("mine".into()), QueueChange { at: Some(2), shuffled: false, follows: false });
+        assert_eq!(s.restore(ItemKey::own("other")).at, None);
+        assert_eq!(s.restore(ItemKey::own("mine")), QueueChange { at: Some(2), shuffled: false, follows: false });
         assert_eq!(s.playlist(|p| (p.ids().to_vec(), p.current(), p.hand(2))), (ids(&["u1", "u2", "mine", "u3", "u4"]), Some(1), Hand::Next));
-        assert_eq!(s.restore("mine".into()).at, None, "only once");
+        assert_eq!(s.restore(ItemKey::own("mine")).at, None, "only once");
 
         // Only the last single removal.
         s.remove(0, 1);
         s.remove(1, 2);
-        assert_eq!(s.restore("u1".into()).at, None);
-        assert_eq!(s.restore("mine".into()).at, Some(1));
+        assert_eq!(s.restore(ItemKey::own("u1")).at, None);
+        assert_eq!(s.restore(ItemKey::own("mine")).at, Some(1));
         s.remove(0, 2);
-        assert_eq!(s.restore("u2".into()).at, None, "a range is not undoable");
+        assert_eq!(s.restore(ItemKey::own("u2")).at, None, "a range is not undoable");
 
         // Removing the current song plays the next; restoring keeps that one current.
         s.set(ids(&["p1", "p2", "p3"]), Some(1), false, None);
         s.remove(1, 2);
-        assert_eq!(s.playlist(|p| p.current_id().map(str::to_string)).as_deref(), Some("p3"));
-        assert_eq!(s.restore("p2".into()).at, Some(1));
+        assert_eq!(s.playlist(|p| p.current_id().map(|k| k.id.clone())).as_deref(), Some("p3"));
+        assert_eq!(s.restore(ItemKey::own("p2")).at, Some(1));
         let v = s.view(0);
         assert_eq!((v.index, v.len), (2, 3));
 
         s.remove(0, 1);
         s.set(ids(&["n1", "p1"]), Some(0), false, None);
-        assert_eq!(s.restore("p1".into()).at, None, "a new queue forgets it");
+        assert_eq!(s.restore(ItemKey::own("p1")).at, None, "a new queue forgets it");
     }
 
     #[test]
     fn a_page_shuffle_turned_off_plays_the_page_in_order() {
         let s = session(&["o0"], 0);
-        let names = |s: &Session| s.playlist(|p| p.play_order().map(|i| p.ids()[i].clone()).collect::<Vec<_>>());
+        let names = |s: &Session| s.playlist(|p| p.play_order().map(|i| p.ids()[i].id.clone()).collect::<Vec<_>>());
         assert_eq!(s.set_shuffled(ids(&["p1", "p2", "p3", "p4"]), vec![2, 0, 3, 1], None, None).at, Some(2), "starts on the order's first");
         s.moved_to(0);
         s.shuffle(false);
-        assert_eq!(s.playlist(|p| p.current_id().map(str::to_string)).as_deref(), Some("p1"), "the song playing goes on");
-        assert_eq!(names(&s), ids(&["p1", "p2", "p3", "p4"]), "the page's order is back");
+        assert_eq!(s.playlist(|p| p.current_id().map(|k| k.id.clone())).as_deref(), Some("p1"), "the song playing goes on");
+        assert_eq!(names(&s), ["p1", "p2", "p3", "p4"], "the page's order is back");
         s.shuffle(true);
         assert_eq!(names(&s)[0], "p1", "shuffled again around the song playing");
     }
@@ -784,16 +791,16 @@ pub(crate) mod tests {
                 p.active_server_id = "p".into();
             });
             s.set(ids(&["t1"]), Some(0), false, None);
-            assert_eq!(s.push_write(Some("t1".into()), 0).is_some(), !off, "scrobble_off {off}");
+            assert_eq!(s.push_write(Some(&ItemKey::own("t1")), 0).is_some(), !off, "scrobble_off {off}");
         }
     }
 
     #[test]
     fn push_leaves_out_radio() {
         let s = session(&["t1", "t2", "radio:9"], 0);
-        match s.push_write(Some("t2".into()), 7) {
+        match s.push_write(Some(&ItemKey::own("t2")), 7) {
             Some(nori_net::requests::Write::SaveQueue { ids: pushed, current, position_ms }) => {
-                assert_eq!((pushed, current.as_deref(), position_ms), (ids(&["t1", "t2"]), Some("t2"), 7));
+                assert_eq!((pushed, current.as_deref(), position_ms), (vec!["t1".to_string(), "t2".to_string()], Some("t2"), 7));
             }
             w => panic!("{w:?}"),
         }

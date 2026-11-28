@@ -29,6 +29,7 @@ pub mod eqfit;
 pub mod focus;
 pub mod gain;
 pub mod graphic;
+pub mod key;
 pub mod outputs;
 #[cfg(feature = "std")]
 pub mod heard;

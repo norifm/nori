@@ -215,7 +215,7 @@ class PagePalette(val look: IntArray, val wash: androidx.compose.ui.graphics.Ima
 
 val LocalPalette = staticCompositionLocalOf<PagePalette?> { null }
 
-/** Star changes made this session, per kind (see Library.starMarks). */
+/** Star changes made this session, per kind, each item by its key (see Library.starMarks). */
 val LocalStarMarks = staticCompositionLocalOf { dev.nori.music.ffi.library.StarMarks(emptyMap(), emptyMap(), emptyMap()) }
 
 /**
@@ -223,8 +223,8 @@ val LocalStarMarks = staticCompositionLocalOf { dev.nori.music.ffi.library.StarM
  * painted with. Every toggle must also act on this, not on the snapshot, or the second tap undoes
  * the first one's server call instead of flipping what is on screen.
  */
-fun dev.nori.music.ffi.library.StarMarks.effectiveStar(kind: dev.nori.music.data.StarKind, id: String, snapshot: Boolean): Boolean =
-    of(kind, id) ?: snapshot
+fun dev.nori.music.ffi.library.StarMarks.effectiveStar(kind: dev.nori.music.data.StarKind, key: dev.nori.music.ffi.model.ItemKey, snapshot: Boolean): Boolean =
+    of(kind, key) ?: snapshot
 
 /**
  * The player's page, aligned to its sleeve. The cover is drawn at the sleeve's own scale behind it, so

@@ -74,7 +74,7 @@ fun ProfileMark(profile: SavedServer, label: String, side: Dp, modifier: Modifie
         when (icon) {
             ProfileIcon.LETTER -> Text(
                 remember(profile, label) { profileLetter(profile, label) },
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = (side.value * 0.42f).sp, fontWeight = FontWeight.SemiBold),
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = (side.value * 0.42f).sp, lineHeight = (side.value * 0.42f).sp, fontWeight = FontWeight.SemiBold),
             )
             ProfileIcon.PROVIDER -> Icon(if (kind == ServerKind.Local) Iconoir.Folder else Iconoir.Server, null, Modifier.size(side * 0.6f))
             else -> Icon(faceGlyph(icon), null, Modifier.size(side * 0.6f))
@@ -151,9 +151,15 @@ private fun ProfileSwitcher(vm: SettingsViewModel, open: Boolean, onDismiss: () 
         Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
             SheetTitle(say.profiles)
             GroupCard {
-                prefs.servers.forEachIndexed { i, profile ->
+                // A profile's sources show inside its Edit, not as profiles of their own.
+                val shown = remember(prefs.servers) { dev.nori.music.ffi.settings.serversShown(prefs.servers) }
+                shown.forEachIndexed { i, profile ->
                     val active = profile.id == prefs.activeServerId
-                    ProfileLine(vm, profile, active, divider = i < prefs.servers.lastIndex, Modifier.testTag("profile-${profile.id}")) {
+                    val sources = dev.nori.music.ffi.settings.profileSources(prefs.servers, profile)
+                    val sourceLabels = sources.map { profileLabel(vm, it) }
+                    val who = profile.user.ifBlank { providerWords(vm, profile.kind).noUser }
+                    val detail = if (sourceLabels.isEmpty()) null else listOf(who, "+ " + sourceLabels.joinToString(", ")).filter { it.isNotEmpty() }.joinToString(" · ")
+                    ProfileLine(vm, profile, active, divider = i < shown.lastIndex, Modifier.testTag("profile-${profile.id}"), detail = detail) {
                         if (!active) vm.switchServer(profile)
                         onDismiss()
                     }

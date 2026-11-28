@@ -17,12 +17,13 @@ use nori_core::playlist::{Hand, QueueEdit};
 use nori_core::lyrics_follow::LyricsNow;
 use nori_core::rules::{queue_keep, BridgeStep, QueueMoment};
 use nori_core::search::{SearchSession, SearchView};
+pub use nori_core::sources::{PlaylistChange, PlaylistChanged};
 use nori_core::update::UpdateCheck;
 use nori_core::settings::{SavedServer, SettingChange, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 use nori_core::transport::{block_on, Exchange, FailureKind, NetError, Transport, TransportError, TransportResponse};
 use nori_tasks::Tasks;
-use nori_core::{Core, CoreError, IngestStats, PageOrigin, Song};
+use nori_core::{Core, CoreError, IngestStats, ItemKey, Keyed, PageOrigin, Song};
 use nori_covers::loader::{Config as CoverConfig, Loader, Shown, Ticket};
 use nori_covers::memory::Image;
 use nori_engine::core::{resolving, settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer};
@@ -422,6 +423,13 @@ impl Session {
         o.kinds.set_transport(transport.clone());
         core.configure_profile(o.profile.clone()).map_err(|e| format!("the server: {e}"))?;
         let cover_net = CoverNet::over(o.http.clone());
+        // A source that can't open here (its plugin off) is left out until the profile opens again.
+        let servers = o.queue.settings.prefs(|p| p.servers.clone());
+        for source in nori_core::settings::profile_sources(servers, o.profile.clone()) {
+            if let Err(e) = core.open_source(db.clone(), source, transport.clone(), cover_net.clone()) {
+                nori_core::alog::info(&format!("a source of the profile did not open: {e}"));
+            }
+        }
         let client = Client::new(core.clone(), transport, cover_net.clone());
         client.set_profile(net(&o.profile));
         // Plugins reach the open profile: its session, its songs' URLs for a cast.
@@ -614,7 +622,7 @@ impl Handle {
     /// Pings the server in the background, fills an empty offline index and flushes pending writes; a
     /// library read from files is read again, offline too.
     pub fn check(&self) {
-        let rescans = self.rules().rescans;
+        let rescans = self.core.any_rescans();
         if rescans {
             self.rescan();
         }
@@ -627,7 +635,7 @@ impl Handle {
             let ok = r.is_ok();
             (me.out)(Said::Reachable(r));
             // Search and the songs list read the offline index, where the profile keeps one.
-            if ok && !rescans && me.rules().indexed && me.core.index_size().map_or(true, |s| s.songs == 0) {
+            if ok && !rescans && me.core.any_empty_index() {
                 me.sync();
             }
             let _ = me.client.flush_pending().await;
@@ -712,7 +720,7 @@ impl Handle {
             session.set(Vec::new(), None, false, None);
             return self.engine.queue_changed();
         };
-        let ids = q.songs.iter().map(|s| s.id.clone()).collect();
+        let ids = q.songs.iter().map(Keyed::key).collect();
         let at = match q.order {
             Some(order) => session.set_shuffled(ids, order, Some(q.index), q.origin),
             None => session.set(ids, Some(q.index), false, q.origin),
@@ -752,7 +760,7 @@ impl Handle {
     /// would. True when it went on.
     pub fn keep_playing(&self, songs: Vec<Song>, at: usize, from: Option<PageOrigin>) -> bool {
         let playing = self.engine.status_with(|s| s.id.clone());
-        let keep = playing.is_some() && songs.get(at).map(|s| &s.id) == playing.as_ref() && self.elsewhere().is_none();
+        let keep = playing.is_some() && songs.get(at).map(Keyed::key) == playing && self.elsewhere().is_none();
         self.play_kept(songs, at, false, from, keep);
         keep
     }
@@ -770,7 +778,7 @@ impl Handle {
 
     /// A radio of `songs`, its seed first: a seed that is playing goes on where it is.
     pub fn play_radio(&self, songs: Vec<Song>) {
-        let origin = songs.first().map(|s| Fetch::Radio(s.id.clone()).origin());
+        let origin = songs.first().map(|s| Fetch::Radio(s.id.clone(), s.source.clone()).origin());
         self.keep_playing(songs, 0, origin);
     }
 
@@ -778,7 +786,7 @@ impl Handle {
     /// goes on with it.
     pub fn play_later(&self, what: Fetch, shuffle: bool) {
         let origin = what.origin();
-        let radio = matches!(what, Fetch::Radio(_));
+        let radio = matches!(what, Fetch::Radio(..));
         self.fetched(what, move |me, songs| match songs.is_empty() {
             false if radio => me.play_radio(songs),
             false => me.play(songs, 0, shuffle, Some(origin)),
@@ -901,7 +909,7 @@ impl Handle {
         self.player_shown(seen);
         if seen {
             self.sync_kept(nori_core::transfers::KeptCheck::Shown);
-            if self.rules().rescans {
+            if self.core.any_rescans() {
                 self.rescan();
             }
         }
@@ -1004,9 +1012,10 @@ impl Handle {
 
     /// Undoes the removal of `id` where it was removed (here, or on the device playing); the playing
     /// song is unchanged.
-    pub fn put_back(&self, id: &str) {
+    pub fn put_back(&self, id: &ItemKey) {
         let back = match self.elsewhere() {
-            Some(e) => e.put_back(id),
+            // Another device holds the profile's own songs alone.
+            Some(e) => id.own_id().is_some_and(|id| e.put_back(id)),
             None => self.restore_here(id),
         };
         if !back {
@@ -1094,7 +1103,7 @@ impl Handle {
     /// changes (`Core::download_playlist`).
     pub fn download_later(&self, what: Fetch) {
         match what {
-            Fetch::Playlist(id) => self.fetched(Fetch::Playlist(id.clone()), move |me, songs| me.download_playlist(id, songs)),
+            Fetch::Playlist(id, crate::PlaylistAt::Source { source: None }) => self.fetched(Fetch::Playlist(id.clone(), crate::PlaylistAt::Source { source: None }), move |me, songs| me.download_playlist(id, songs)),
             what => self.fetched(what, |me, songs| me.download(songs)),
         }
     }
@@ -1125,16 +1134,20 @@ impl Handle {
         });
     }
 
-    /// Sends `w`, a change to a playlist, and waits for the server to take it; a kept playlist it changed
-    /// then follows before this returns (`Client::kept_playlist_written`). Not on a UI thread.
-    pub fn write_playlist(&self, w: nori_core::client::Write) -> Result<(), NetError> {
-        block_on(self.client.write(w.clone()))?;
-        if !self.offline && self.rules().downloads {
-            if let Ok(change) = block_on(self.client.kept_playlist_written(w)) {
-                self.kept_changed(change);
-            }
+    /// Changes `playlist` where it is kept (`Client::playlist_change`); what it changed of the downloads
+    /// follows. Waits for it; not on a UI thread.
+    pub fn playlist_change(&self, playlist: nori_core::Playlist, change: PlaylistChange) -> Result<PlaylistChanged, NetError> {
+        let changed = block_on(self.client.clone().playlist_change(playlist, change))?;
+        if let PlaylistChanged::Done { kept } = &changed {
+            self.kept_changed(kept.clone());
         }
-        Ok(())
+        Ok(changed)
+    }
+
+    /// A new playlist named `name` of `songs`, kept where `Client::new_playlist_in` says. Waits for it;
+    /// not on a UI thread.
+    pub fn playlist_make(&self, name: String, songs: Vec<Song>) -> Result<(), NetError> {
+        block_on(self.client.clone().playlist_create(name, songs))
     }
 
     /// Does what keeping playlists downloaded changed: the songs queued download, covers too, and those
@@ -1143,32 +1156,32 @@ impl Handle {
         for id in &change.gone {
             self.download_remove(id);
         }
-        let queued: std::collections::HashSet<&String> = change.queued.fresh.iter().chain(&change.queued.again).collect();
+        let queued: std::collections::HashSet<&ItemKey> = change.queued.fresh.iter().chain(&change.queued.again).collect();
         if queued.is_empty() {
             return;
         }
-        let songs: Vec<Song> = self.core.downloads(false).unwrap_or_default().into_iter().filter(|s| queued.contains(&s.id)).collect();
+        let songs: Vec<Song> = self.core.downloads(false).unwrap_or_default().into_iter().filter(|s| queued.contains(&s.key())).collect();
         warm_covers(&self.core, self.covers.as_ref(), &songs);
         self.start_downloads();
     }
 
     /// Where song `id`'s download stands.
-    pub fn download_state(&self, id: &str) -> nori_core::menus::SongDownload {
-        self.download_states(&[id])[0]
+    pub fn download_state(&self, id: &ItemKey) -> nori_core::menus::SongDownload {
+        self.download_states(std::slice::from_ref(id))[0]
     }
 
     /// Where each song's download stands, the downloads and the queue read once for them all.
-    pub fn download_states(&self, ids: &[&str]) -> Vec<nori_core::menus::SongDownload> {
+    pub fn download_states(&self, ids: &[ItemKey]) -> Vec<nori_core::menus::SongDownload> {
         use nori_core::menus::SongDownload;
-        let done: std::collections::HashSet<String> = self.core.download_ids(true).unwrap_or_default().into_iter().collect();
+        let done: std::collections::HashSet<ItemKey> = self.core.download_ids(true).unwrap_or_default().into_iter().collect();
         let waiting = self.core.download_waiting().unwrap_or_default();
         ids.iter()
-            .map(|id| if done.contains(*id) { SongDownload::Done } else if waiting.contains(*id) { SongDownload::Pending } else { SongDownload::None })
+            .map(|id| if done.contains(id) { SongDownload::Done } else if waiting.contains(id) { SongDownload::Pending } else { SongDownload::None })
             .collect()
     }
 
     /// Each song's row mark (`menus::download_glyphs`), none where downloads are not the profile's.
-    pub fn download_glyphs(&self, ids: &[&str], page: bool) -> Vec<nori_core::menus::DownloadGlyph> {
+    pub fn download_glyphs(&self, ids: &[ItemKey], page: bool) -> Vec<nori_core::menus::DownloadGlyph> {
         if !self.rules().downloads {
             return vec![nori_core::menus::DownloadGlyph::None; ids.len()];
         }
@@ -1176,8 +1189,8 @@ impl Handle {
     }
 
     /// Deletes a download from disk.
-    pub fn download_remove(&self, id: &str) {
-        let _ = self.core.download_remove(id.to_string());
+    pub fn download_remove(&self, id: &ItemKey) {
+        let _ = self.core.download_remove(id.clone());
         if let Some(store) = &self.store {
             let _ = std::fs::remove_file(store.download_path(id));
         }
@@ -1349,7 +1362,7 @@ impl Handle {
     /// without a cover loader.
     pub fn cover(&self, id: String, px: u32, colours: bool, done: impl FnMut(Result<Arc<Image>, nori_covers::Error>, Option<Box<CoverColours>>, Shown) + Send + 'static) -> Option<Ticket> {
         let covers = self.covers.as_ref()?;
-        let (own, stand_ins) = self.core.cover_addresses(&id, px);
+        let (own, stand_ins) = self.core.cover_addresses(&id, px)?;
         if !colours {
             let mut done = done;
             return Some(covers.request_standing_in(&own, &stand_ins, px, px, move |r, shown| done(r, None, shown)));
@@ -1431,36 +1444,37 @@ impl Handle {
         })
     }
 
-    /// Stars or unstars on the server (queued when offline); says so when it fails.
-    pub fn star(&self, kind: Starrable, id: String, on: bool) {
+    /// Stars or unstars an item of `source` in that source (a server queues it offline); says so when it
+    /// fails.
+    pub fn star(&self, source: Option<String>, kind: Starrable, id: String, on: bool) {
         if !self.rules().stars {
             return;
         }
         let (client, out, hearts) = (self.client.clone(), self.out.clone(), self.hearts());
         self.run(async move {
-            if let Err(e) = client.star(kind, id, on, hearts).await {
+            if let Err(e) = client.star_in(source, kind, id, on, hearts).await {
                 out(Said::Note(Note::StarFailed(e)));
             }
         });
     }
 
     /// Whether `song` shows starred: as `there` (the device playing, while it is another one) shows it
-    /// when the song is in its queue, else this session's mark over the song's record.
+    /// when the song is in its queue, else its source's mark over the song's record.
     pub fn starred(&self, song: &Song, there: Option<&crate::remote::Elsewhere>) -> bool {
-        there.and_then(|e| e.starred(&song.id)).unwrap_or_else(|| self.core.starred(Starrable::Song, &song.id, song.starred))
+        there.and_then(|e| e.starred(&song.key())).unwrap_or_else(|| self.core.starred_in(song.source.clone(), Starrable::Song, &song.id, song.starred))
     }
 
-    /// Whether song `id` shows starred, its record saying `listed`, as [`Handle::starred`] does with the
+    /// Whether song `key` shows starred, its record saying `listed`, as [`Handle::starred`] does with the
     /// device playing elsewhere, without copying that device's queue.
-    pub fn song_starred(&self, id: &str, listed: bool) -> bool {
-        self.remotes.get().and_then(|r| r.mirrored_starred(id)).unwrap_or_else(|| self.core.starred(Starrable::Song, id, listed))
+    pub fn song_starred(&self, key: &ItemKey, listed: bool) -> bool {
+        key.own_id().and_then(|id| self.remotes.get()?.mirrored_starred(id)).unwrap_or_else(|| self.core.starred_in(key.source.clone(), Starrable::Song, &key.id, listed))
     }
 
-    /// Stars or unstars a song once: through `there` while the song is in its queue (that device tells
-    /// the server and shows it), else from here.
-    pub fn star_song(&self, id: String, on: bool, there: Option<&crate::remote::Elsewhere>) {
-        if !there.is_some_and(|e| e.star(&id, on)) {
-            self.star(Starrable::Song, id, on);
+    /// Stars or unstars song `key` once: through `there` while the song is in its queue (that device
+    /// tells the server and shows it), else from here.
+    pub fn star_song(&self, key: ItemKey, on: bool, there: Option<&crate::remote::Elsewhere>) {
+        if !there.is_some_and(|e| e.star(&key, on)) {
+            self.star(key.source, Starrable::Song, key.id, on);
         }
     }
 
@@ -1606,7 +1620,7 @@ impl Handle {
         let me = self.clone();
         self.run(async move {
             let fresh = me.client.queue_ended().await;
-            let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
+            let ids: Vec<ItemKey> = fresh.songs.iter().map(Keyed::key).collect();
             let q = &me.core.session;
             let (len, end) = q.playlist(|p| (p.len(), p.play_order().last().map(|at| p.seqs()[at])));
             // A queue started meanwhile plays instead.
@@ -1634,7 +1648,7 @@ impl Handle {
     }
 
     fn filled(&self, fresh: nori_core::autofill::Refill) {
-        let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
+        let ids: Vec<ItemKey> = fresh.songs.iter().map(Keyed::key).collect();
         if !self.client.autofill_arrived(fresh) || ids.is_empty() {
             return;
         }
@@ -1751,10 +1765,10 @@ impl Handle {
     }
 
     /// Puts back `id` where it was taken out; false when it was not the last song removed.
-    fn restore_here(&self, id: &str) -> bool {
+    fn restore_here(&self, id: &ItemKey) -> bool {
         let q = &self.core.session;
         let was_empty = q.playlist(|p| p.is_empty());
-        if q.restore(id.to_string()).at.is_none() {
+        if q.restore(id.clone()).at.is_none() {
             return false;
         }
         self.edited();
@@ -1781,11 +1795,11 @@ impl Handle {
 
     /// Another device's undo: `song` back where it was taken out, else at list index `index`.
     pub(crate) fn put_back_from_afar(&self, song: Song, index: usize) {
-        if self.restore_here(&song.id) {
+        if self.restore_here(&song.key()) {
             return;
         }
         let q = &self.core.session;
-        let (len, id) = (q.playlist(|p| p.len()), song.id.clone());
+        let (len, id) = (q.playlist(|p| p.len()), song.key());
         q.register(vec![song]);
         q.take(index.min(len) as u32, vec![id], vec![Hand::No]);
         self.edited();
@@ -1821,7 +1835,7 @@ impl Handle {
         }
         let q = &self.core.session;
         q.register(songs.clone());
-        let change = q.handed(songs.iter().map(|s| s.id.clone()).collect(), index.min(songs.len() - 1) as u32, order, shuffle, repeat);
+        let change = q.handed(songs.iter().map(Keyed::key).collect(), index.min(songs.len() - 1) as u32, order, shuffle, repeat);
         self.engine.set_repeat(repeat);
         self.edited();
         let at = change.at.unwrap_or(0) as usize;
@@ -1864,7 +1878,7 @@ impl Handle {
         }
         let q = &self.core.session;
         q.register(songs.clone());
-        let change = q.set(songs.iter().map(|s| s.id.clone()).collect(), (!shuffle).then_some(start as u32), shuffle, from);
+        let change = q.set(songs.iter().map(Keyed::key).collect(), (!shuffle).then_some(start as u32), shuffle, from);
         self.edited();
         if !keep {
             self.engine.play_at(change.at.unwrap_or(0) as usize, 0);
@@ -1914,7 +1928,7 @@ impl Handle {
         let (len, current) = q.playlist(|p| (p.len(), p.current()));
         let at = if next { current.map_or(len, |c| c + 1) } else { len };
         let hand = if next { Hand::Next } else { Hand::Last };
-        q.take(at as u32, songs.iter().map(|s| s.id.clone()).collect(), vec![hand; n]);
+        q.take(at as u32, songs.iter().map(Keyed::key).collect(), vec![hand; n]);
         self.edited();
         if len == 0 {
             self.engine.go_to(0, 0);
@@ -1969,6 +1983,11 @@ fn colours_in_order(pictures: std::sync::mpsc::Receiver<(Result<Arc<Image>, nori
         worn = Some(c.clone());
         done(Ok(image), Some(Box::new(c)), shown);
     }
+}
+
+/// [`read_pages`] of an item's read in `source`, the source the item comes from.
+pub fn read_pages_in(client: &Arc<Client>, source: Option<String>, read: Read, each: impl FnMut(Page)) -> Result<(), NetError> {
+    block_on(client.clone().read_each_in(source, read, each))
 }
 
 /// The same monotonic clock remote handoffs use to close a listen.
@@ -2033,6 +2052,7 @@ mod tests {
     use nori_engine::Loader;
 
     use super::*;
+    use nori_core::ItemKey;
 
     #[test]
     fn an_update_check_says_a_newer_release_and_the_rest_only_when_asked() {
@@ -2061,7 +2081,7 @@ mod tests {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let song = |id: &str| Song { id: id.into(), ..Default::default() };
         core.download_queue(vec![song("done")]).unwrap();
-        core.download_settle(vec!["done".into()], vec![true]).unwrap();
+        core.download_settle(vec![ItemKey::own("done")], vec![true]).unwrap();
         let said = queue_downloads(&core, None, vec![song("done"), song("new"), song("ext-1")]);
         assert!(matches!(said, Note::Downloading(2)), "the finished song is not downloaded again; a provider's is");
     }
@@ -2079,7 +2099,7 @@ mod tests {
         let (album, other) = (PageOrigin::new(nori_core::OriginKind::Album, "al"), PageOrigin::new(nori_core::OriginKind::Album, "other"));
         let songs: Vec<Song> = ["a", "b", "c", "d"].map(|id| Song { id: id.into(), ..Default::default() }).into();
         s.play(songs, 0, true, Some(album.clone()));
-        let playing = || s.core.session.playlist(|p| p.current_id().map(str::to_string));
+        let playing = || s.core.session.playlist(|p| p.current_id().map(|k| k.id.clone()));
         let started = playing();
         assert!(!s.shuffle_page(&other), "another page's Shuffle starts its own songs");
         assert!(s.shuffle_page(&album));
@@ -2092,6 +2112,35 @@ mod tests {
         s.close();
     }
 
+    /// A profile opens with the sources it lists that are saved; its queue stays its own, its sources'
+    /// songs in it saying where they come from.
+    #[test]
+    fn a_profile_opens_with_its_sources() {
+        let dir = nori_testdir::TempDir::new("host-sources");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        prefs.remote_control = false;
+        let home = SavedServer { id: "home".into(), url: "http://own".into(), user: "ann".into(), sources: vec!["nd2".into(), "missing".into()], ..Default::default() };
+        let other = SavedServer { id: "nd2".into(), url: "http://other".into(), user: "ann".into(), ..Default::default() };
+        prefs.servers = vec![home.clone(), other];
+        prefs.active_server_id = "home".into();
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings));
+        let open = || Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), home.clone(), Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let s = open();
+        assert!(s.client.in_source(&Some("nd2".into())).is_ok());
+        assert!(s.client.in_source(&Some("missing".into())).is_err(), "a source not saved is left out");
+        let songs = vec![Song { id: "a".into(), ..Default::default() }, Song { id: "b".into(), source: Some("nd2".into()), ..Default::default() }];
+        s.play(songs, 0, false, None);
+        s.keep(QueueMoment::Closing);
+        s.close();
+        let s = open();
+        let b = ItemKey { source: Some("nd2".into()), id: "b".into() };
+        assert_eq!(s.core.session.playlist(|p| p.ids().to_vec()), [ItemKey::own("a"), b.clone()], "kept with the profile's queue");
+        assert!(s.core.session.song(&b).is_some() && s.core.session.song(&ItemKey::own("b")).is_none(), "b is nd2's");
+        s.close();
+    }
+
     /// A profile opens on its own saved queue or none, not on the one the profile open before left (a
     /// jam's host's songs, once the guest left).
     #[test]
@@ -2099,7 +2148,7 @@ mod tests {
         let dir = nori_testdir::TempDir::new("host-queue");
         let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
         queue.register(vec![Song { id: "host-song".into(), duration: 100, ..Default::default() }]);
-        queue.set(vec!["host-song".into()], Some(0), false, None);
+        queue.set(vec![ItemKey::own("host-song")], Some(0), false, None);
         let profile = SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), password: "pw".into(), ..Default::default() };
         let s = Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) })
         .unwrap();
@@ -2180,9 +2229,9 @@ mod tests {
         let search = || Some(PageOrigin::new(nori_core::OriginKind::Search, "dogs"));
         let ids = || queue.playlist(|p| (p.ids().to_vec(), p.current()));
         s.play(found.clone(), 1, false, search());
-        assert_eq!(ids(), (vec!["b".to_string()], Some(0)));
+        assert_eq!(ids(), (vec![nori_core::ItemKey::own("b")], Some(0)));
         s.keep_playing(found, 2, search());
-        assert_eq!(ids(), (vec!["c".to_string()], Some(0)));
+        assert_eq!(ids(), (vec![nori_core::ItemKey::own("c")], Some(0)));
         s.close();
     }
 
@@ -2218,7 +2267,7 @@ mod tests {
         let s = Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
         let songs: Vec<Song> = ["a", "b", "c", "d"].map(|id| Song { id: id.into(), ..Default::default() }).into();
         s.play(songs, 1, false, None);
-        let ids = || queue.playlist(|p| (p.ids().to_vec(), p.current()));
+        let ids = || queue.playlist(|p| (p.ids().iter().map(|k| k.id.clone()).collect::<Vec<_>>(), p.current()));
         for undo in [Handle::put_back_cleared as fn(&Handle), Handle::undo] {
             s.clear_upcoming();
             assert_eq!(ids(), (vec!["a".to_string(), "b".into()], Some(1)));

@@ -1,7 +1,7 @@
 //! Play actions beyond handing a list to the player: taps, shuffles, radio, test refs and M3U import.
 
 use nori_library::mixes;
-use nori_model::Song;
+use nori_model::{ItemKey, Keyed, Song};
 use nori_settings::settings::TapAction;
 
 use crate::autofill::seed_now;
@@ -75,15 +75,15 @@ fn plan_shuffle(songs: Vec<Song>, seed: u64) -> ShufflePlan {
 
 /// A radio: `seed`, then `picks` and `similar` taking turns, each song once, without provider songs or
 /// `excluded` ones, up to [`RADIO`] songs. None when nothing follows the seed.
-pub fn radio_queue(seed: Song, picks: Vec<Song>, similar: Vec<Song>, excluded: &[String]) -> Option<Vec<Song>> {
-    let wanted = |s: &Song| s.id != seed.id && !s.is_provider() && !excluded.contains(&s.id);
+pub fn radio_queue(seed: Song, picks: Vec<Song>, similar: Vec<Song>, excluded: &[ItemKey]) -> Option<Vec<Song>> {
+    let wanted = |s: &Song| s.key() != seed.key() && !s.is_provider() && !excluded.contains(&s.key());
     let (mut picks, mut similar) = (picks.into_iter().filter(wanted), similar.into_iter().filter(wanted));
     let turns = std::iter::from_fn(|| match (picks.next(), similar.next()) {
         (None, None) => None,
         (a, b) => Some(a.into_iter().chain(b)),
     });
-    let mut seen = std::collections::HashSet::from([seed.id.clone()]);
-    let rest: Vec<Song> = turns.flatten().filter(|s| seen.insert(s.id.clone())).collect();
+    let mut seen = std::collections::HashSet::from([seed.key()]);
+    let rest: Vec<Song> = turns.flatten().filter(|s| seen.insert(s.key())).collect();
     if rest.is_empty() {
         return None;
     }
@@ -136,10 +136,15 @@ mod tests {
     fn a_radio_takes_turns_and_leaves_out_what_it_should() {
         let s = |id: &str| Song { id: id.into(), ..Default::default() };
         let ids = |q: Vec<Song>| q.into_iter().map(|s| s.id).collect::<Vec<_>>();
-        let got = radio_queue(s("seed"), vec![s("seed"), s("p1"), s("both"), s("p2")], vec![s("s1"), s("both"), s("out")], &["out".to_string()]).unwrap();
+        let got = radio_queue(s("seed"), vec![s("seed"), s("p1"), s("both"), s("p2")], vec![s("s1"), s("both"), s("out")], &[ItemKey::own("out")]).unwrap();
         assert_eq!(ids(got), ["seed", "p1", "s1", "both", "p2"]);
         let many: Vec<Song> = (0..80).map(|i| s(&format!("m{i}"))).collect();
         assert_eq!(radio_queue(s("seed"), many, vec![], &[]).unwrap().len(), RADIO as usize);
+
+        // The seed's id in another source is another song, kept; one left out of the mixes is the profile's own.
+        let theirs = |id: &str| Song { source: Some("nd2".into()), ..s(id) };
+        let got = radio_queue(s("seed"), vec![theirs("seed"), theirs("out"), s("out")], vec![theirs("seed")], &[ItemKey::own("out")]).unwrap();
+        assert_eq!(got.iter().map(Keyed::key).collect::<Vec<_>>(), [s("seed").key(), theirs("seed").key(), theirs("out").key()]);
     }
 
     fn song(id: &str, title: &str, artist: &str, album: &str, genre: &str, year: u32) -> Song {

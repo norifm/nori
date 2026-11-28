@@ -15,7 +15,7 @@ pub struct Seen {
     pub offloaded: bool,
     /// The audible song (queue index, id) and position, ms.
     pub index: Option<usize>,
-    pub id: Option<String>,
+    pub id: Option<nori_player::key::ItemKey>,
     pub position_ms: i64,
     /// Music written to the output and not yet played, ms.
     pub in_output_ms: i64,

@@ -8,7 +8,7 @@ use crate::Core;
 impl Core {
     /// [`session_buttons`] for the queue's current song.
     pub fn session_buttons_now(&self, starred: bool, shuffle: bool) -> SessionButtons {
-        let song = self.session.playlist(|p| p.current_id().is_some_and(|id| !crate::queue::is_radio(id)));
+        let song = self.session.playlist(|p| p.current_id().is_some_and(|id| !crate::queue::is_radio(&id.id)));
         session_buttons(song, starred, shuffle)
     }
 }

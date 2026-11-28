@@ -8,7 +8,7 @@
   import { W } from "../words";
   import Icon from "./Icon.svelte";
 
-  let { what, id, on }: { what: "song" | "album" | "artist" | "playlist"; id: string; on: boolean } = $props();
+  let { what, id, source = null, on }: { what: "song" | "album" | "artist" | "playlist"; id: string; source?: string | null; on: boolean } = $props();
   let stamp = $state(false);
 
   // A favorite taken off ends the stamp.
@@ -27,7 +27,7 @@
   onclick={(e) => {
     e.stopPropagation();
     stamp = !on;
-    void (what === "playlist" ? library.pin(id, !on) : library.change({ kind: "star", what, id, on: !on }).then(() => player.refresh()));
+    void (what === "playlist" ? library.pin(id, !on) : library.change({ kind: "star", what, id, source: source ?? undefined, on: !on }).then(() => player.refresh()));
   }}><Icon name={on ? "sealed" : "seal"} /></button
 >
 

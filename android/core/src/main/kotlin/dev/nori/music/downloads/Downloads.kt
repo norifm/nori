@@ -41,7 +41,11 @@ import dev.nori.music.ffi.transfers.DownloadQueued
 import dev.nori.music.ffi.transfers.NoticeKind
 import dev.nori.music.ffi.transfers.SummaryText
 import dev.nori.music.ffi.transfers.SummaryTitle
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.model.Song
+import dev.nori.music.ffi.model.itemKeyTexts
+import dev.nori.music.ffi.model.itemKeysOf
+import dev.nori.music.data.key
 import dev.nori.music.playback.MediaSources
 import dev.nori.music.settings.Settings
 import dev.nori.music.text.Fmt
@@ -65,10 +69,10 @@ class DownloadState internal constructor(
     private val core: Core? = null,
     private val version: Long = 0,
     private val songs: (Boolean) -> List<Song> = { emptyList() },
-    private val ids: (Boolean) -> List<String> = { emptyList() },
+    private val ids: (Boolean) -> List<ItemKey> = { emptyList() },
 ) {
-    val doneIds: Set<String> = Membership(DownloadsJni.DONE, doneCount)
-    val pendingIds: Set<String> = Membership(DownloadsJni.PENDING, pendingCount)
+    val doneIds: Set<ItemKey> = Membership(DownloadsJni.DONE, doneCount)
+    val pendingIds: Set<ItemKey> = Membership(DownloadsJni.PENDING, pendingCount)
 
     /** Every downloaded song, newest first: read from the core the first time it is asked, never on the main thread. */
     val done: List<Song> by lazy { songs(true) }
@@ -82,8 +86,8 @@ class DownloadState internal constructor(
      * One side of the table as a set: a lookup is one question to the core. Equal only to itself, so
      * nothing compares two of them song by song; a change to the table is a new [DownloadState].
      */
-    private inner class Membership(private val kind: Int, override val size: Int) : AbstractSet<String>() {
-        override fun contains(element: String) = size > 0 && DownloadsJni.held(DownloadsJni.h, element) == kind
+    private inner class Membership(private val kind: Int, override val size: Int) : AbstractSet<ItemKey>() {
+        override fun contains(element: ItemKey) = size > 0 && DownloadsJni.held(DownloadsJni.h, element.source, element.id) == kind
         override fun iterator() = ids(kind == DownloadsJni.DONE).iterator()
         override fun equals(other: Any?) = this === other
         override fun hashCode() = System.identityHashCode(this)
@@ -111,7 +115,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     private val _state = MutableStateFlow(DownloadState())
     val state: StateFlow<DownloadState> = _state
 
-    private val _marks = MutableStateFlow<Map<String, DownloadMark>>(emptyMap())
+    private val _marks = MutableStateFlow<Map<ItemKey, DownloadMark>>(emptyMap())
     /**
      * The songs this session's downloads are doing something with: downloading, failed, or finished
      * lately. A pending song with no mark is waiting its turn. It changes when a download changes phase,
@@ -119,12 +123,12 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      * map is not redrawn per percent. The phases and the bookkeeping are the core's
      * (crates/transfers/src/transfers.rs); this mirrors them for the screens.
      */
-    val marks: StateFlow<Map<String, DownloadMark>> = _marks
+    val marks: StateFlow<Map<ItemKey, DownloadMark>> = _marks
 
     /** Each marked song's progress, 0..1 or negative while its size is unknown. */
-    private val progress = ConcurrentHashMap<String, MutableStateFlow<Float>>()
+    private val progress = ConcurrentHashMap<ItemKey, MutableStateFlow<Float>>()
 
-    private fun progressOf(id: String) = progress.getOrPut(id) { MutableStateFlow(DownloadsJni.startFraction(DownloadsJni.h, id)) }
+    private fun progressOf(id: ItemKey) = progress.getOrPut(id) { MutableStateFlow(DownloadsJni.startFraction(DownloadsJni.h, id.source, id.id)) }
 
     val manager: DownloadManager by lazy {
         // media3's own wiring (DefaultDownloadIndex, DefaultDownloaderFactory over the download cache),
@@ -152,19 +156,22 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
                 // The queue as media3 restored it from its index: the downloads a force stop interrupted
                 // start again from where their bytes end, and the batch counts them from here.
                 override fun onInitialized(m: DownloadManager) {
-                    for (d in m.currentDownloads) follow(d)
+                    val downloads = m.currentDownloads
+                    for ((d, id) in downloads.zip(downloads.map { it.request }.keys())) follow(d, id)
                 }
 
                 override fun onDownloadChanged(m: DownloadManager, d: Download, e: Exception?) {
-                    follow(d)
-                    if (d.state == Download.STATE_COMPLETED) settle(d.request.id, true)
+                    val id = d.request.key
+                    follow(d, id)
+                    if (d.state == Download.STATE_COMPLETED) settle(id, true)
                 }
 
                 override fun onDownloadRemoved(m: DownloadManager, d: Download) {
-                    val flags = DownloadsJni.removed(DownloadsJni.h, d.request.id)
-                    progress.remove(d.request.id)
+                    val id = d.request.key
+                    val flags = DownloadsJni.removed(DownloadsJni.h, id.source, id.id)
+                    progress.remove(id)
                     if (flags and DownloadsJni.MARKS != 0) refreshMarks()
-                    settle(d.request.id, false)
+                    settle(id, false)
                     if (flags and DownloadsJni.DRAINED != 0) summarise()
                 }
 
@@ -205,10 +212,10 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
 
     /** Every downloaded song, newest first, read from the core now (never on the main thread). */
     fun doneSongs(): List<Song> = songs(true)
-    private fun ids(done: Boolean): List<String> = runCatching { core.downloadIds(done) }.getOrDefault(emptyList())
+    private fun ids(done: Boolean): List<ItemKey> = runCatching { core.downloadIds(done) }.getOrDefault(emptyList())
 
     /** Downloads that finished (true) or left the queue (false) and are not written down yet, in order. */
-    private val settledIds = ArrayList<String>()
+    private val settledIds = ArrayList<ItemKey>()
     private val settledDone = ArrayList<Boolean>()
 
     /**
@@ -216,7 +223,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      * and one transaction, followed by one [publish]: stopping a library's worth of downloads reports each
      * song on its own, and writing each on its own was a call, a statement and a count per song.
      */
-    private fun settle(id: String, finished: Boolean) {
+    private fun settle(id: ItemKey, finished: Boolean) {
         val first = synchronized(settledIds) {
             settledIds.add(id); settledDone.add(finished)
             settledIds.size == 1
@@ -237,7 +244,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         if (got.isEmpty()) return
         // What each needs - its lyrics, its analysis read back from the disk, the beat model - is the core's,
         // decided and started here, one song at a time on threads of its own.
-        runCatching { dev.nori.music.playback.MeasureJni.processSaved(analyses(), got.toTypedArray()) }.onFailure { Log.w(TAG, "could not read ${got.size} downloads back", it) }
+        runCatching { dev.nori.music.playback.MeasureJni.processSaved(analyses(), itemKeyTexts(got).toTypedArray()) }.onFailure { Log.w(TAG, "could not read ${got.size} downloads back", it) }
         watchMarks()
         // Each shows as processing until its lyrics, analysis and beats are over, or a step runs past its time.
         main.post { main.removeCallbacks(expire); expire.run() }
@@ -271,7 +278,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      */
     fun analyse(done: (Int) -> Unit) = io.execute {
         val ids = runCatching { core.downloadUnanalysed() }.getOrElse { Log.w(TAG, "could not list the downloads to analyse", it); emptyList() }
-        val n = if (ids.isEmpty()) 0 else runCatching { dev.nori.music.playback.MeasureJni.processAnalyse(analyses(), ids.toTypedArray()) }.getOrDefault(0)
+        val n = if (ids.isEmpty()) 0 else runCatching { dev.nori.music.playback.MeasureJni.processAnalyse(analyses(), itemKeyTexts(ids).toTypedArray()) }.getOrDefault(0)
         if (n > 0) {
             watchMarks()
             main.post {
@@ -357,11 +364,8 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         val pending = _state.value.pendingIds
         if (pending.isEmpty()) { resumed = true; return }
         val known = runCatching {
-            DefaultDownloadIndex(sources.database).getDownloads().use { c ->
-                buildList {
-                    while (c.moveToNext()) c.download.let { if (it.request.id in pending) add(DownloadKnown(it.request.id, it.state, it.contentLength, it.bytesDownloaded)) }
-                }
-            }
+            val table = DefaultDownloadIndex(sources.database).getDownloads().use { c -> buildList { while (c.moveToNext()) add(c.download) } }
+            table.zip(table.map { it.request }.keys()).filter { (_, id) -> id in pending }.map { (d, id) -> DownloadKnown(id, d.state, d.contentLength, d.bytesDownloaded) }
         }.getOrDefault(emptyList())
         val r = runCatching { core.downloadRecover(known) }.getOrElse { Log.w(TAG, "could not recover the queue", it); return }
         for (id in r.finished) sources.dropStreamCopies(id)
@@ -374,7 +378,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
             resumed = runCatching {
                 // Starting the service brings the manager and its restored queue up; the lost go straight to it.
                 DownloadService.start(context, DownloadWorker::class.java)
-                for (id in r.lost) manager.addDownload(request(id))
+                for ((_, request) in requests(r.lost)) manager.addDownload(request)
             }.onFailure { Log.w(TAG, "could not start the download service yet", it) }.isSuccess
         }
     }
@@ -384,9 +388,8 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      * says: a new batch takes the last one's result away, the phases changed, or the batch is over and
      * says how it went. Runs on the main thread, where media3 reports.
      */
-    private fun follow(d: Download) {
-        val id = d.request.id
-        val flags = DownloadsJni.followed(DownloadsJni.h, id, d.state, SystemClock.elapsedRealtime())
+    private fun follow(d: Download, id: ItemKey) {
+        val flags = DownloadsJni.followed(DownloadsJni.h, id.source, id.id, d.state, SystemClock.elapsedRealtime())
         if (flags and DownloadsJni.NEW_BATCH != 0) cancelResult()
         when (d.state) {
             Download.STATE_DOWNLOADING -> progressOf(id)
@@ -409,15 +412,15 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
             val id = m.ids[i]
             val phase = m.phases[i]
             if (phase != null) next[id] = DownloadMark(phase, progressOf(id), m.at[i])
-            else if (next.remove(id) != null && DownloadsJni.held(DownloadsJni.h, id) != DownloadsJni.PENDING) progress.remove(id)
+            else if (next.remove(id) != null && DownloadsJni.held(DownloadsJni.h, id.source, id.id) != DownloadsJni.PENDING) progress.remove(id)
         }
         _marks.value = next
         if (summaryWaits || next.values.any { it.phase.processing }) summarise()
     }
 
-    private fun unmark(ids: Collection<String>) {
+    private fun unmark(ids: Collection<ItemKey>) {
         var changed = false
-        for (id in ids) { progress.remove(id); if (DownloadsJni.unmark(DownloadsJni.h, id) and DownloadsJni.MARKS != 0) changed = true }
+        for (id in ids) { progress.remove(id); if (DownloadsJni.unmark(DownloadsJni.h, id.source, id.id) and DownloadsJni.MARKS != 0) changed = true }
         if (changed) main.post { refreshMarks() }
     }
 
@@ -438,7 +441,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         if (change.gone.isNotEmpty()) main.post { remove(change.gone) }
         val ids = (change.queued.fresh + change.queued.again).toSet()
         if (ids.isNotEmpty()) io.execute {
-            val covers = core.downloads(false).filter { it.id in ids }.mapNotNull { it.coverArt }
+            val covers = core.downloads(false).filter { it.key in ids }.mapNotNull { it.coverArt }
             val loader = dev.nori.music.data.CoverLoader.get(context)
             for (url in core.downloadCoverUrls(covers)) loader.warm(url)
         }
@@ -452,25 +455,25 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     private fun queued(result: Result<DownloadQueued>) {
         val q = result.getOrElse { Log.w(TAG, "could not queue downloads", it); return }
         if (q.fresh.isNotEmpty()) publish()
-        val requests = q.fresh.map(::request)
-        val retries = q.again.map(::request)
+        val requests = requests(q.fresh)
+        val retries = requests(q.again)
         main.post {
             // Listed once: media3 hands out a fresh copy of its list each time it is asked.
             val working = if (retries.isEmpty()) emptySet() else manager.currentDownloads.mapTo(HashSet()) { it.request.id }
-            val again = retries.filter { it.id !in working }
-            unmark(again.map { it.id })
-            add(requests + again)
+            val again = retries.filter { (_, r) -> r.id !in working }
+            unmark(again.map { it.first })
+            add((requests + again).map { it.second })
         }
     }
 
     /** Sends failed downloads round again; they rejoin the queue at its end. */
     fun retry(songs: List<Song>) {
         if (songs.isEmpty()) return
-        unmark(songs.map { it.id })
+        unmark(songs.map { it.key })
         io.execute {
             val q = runCatching { core.downloadQueue(songs) }.getOrElse { Log.w(TAG, "could not retry downloads", it); return@execute }
             publish()
-            val requests = (q.fresh + q.again).map(::request)
+            val requests = requests(q.fresh + q.again).map { it.second }
             main.post { add(requests) }
         }
     }
@@ -484,26 +487,32 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         }.onFailure { Log.w(TAG, "could not queue ${requests.size} downloads", it) }
     }
 
-    /** What the song is and how much it should weigh the core knows from its own downloads table. */
-    private fun request(id: String): DownloadRequest =
-        DownloadRequest.Builder(id, Uri.parse(sources.downloadUrl(id))).setCustomCacheKey(sources.downloadKey(id)).build()
+    /**
+     * Songs' requests, each named by its key's text; what the song is and how much it should weigh the core
+     * knows from its own downloads table. A song of a source the profile no longer has gets none.
+     */
+    private fun requests(ids: List<ItemKey>): List<Pair<ItemKey, DownloadRequest>> =
+        ids.zip(itemKeyTexts(ids)).mapNotNull { (id, name) ->
+            val url = sources.downloadUrl(id) ?: return@mapNotNull null
+            id to DownloadRequest.Builder(name, Uri.parse(url)).setCustomCacheKey(sources.downloadKey(id)).build()
+        }
 
     /**
      * Removes downloads. The index entry goes at once as well as through media3's callback: a song media3
      * has no download for (left pending by an earlier session, or finished just before a power cut rolled
      * media3's own record back) gets no callback, and would otherwise stay for ever.
      */
-    fun remove(ids: List<String>) {
+    fun remove(ids: List<ItemKey>) {
         if (ids.isEmpty()) return
         runCatching {
             DownloadService.start(context, DownloadWorker::class.java)
-            for (id in ids) manager.removeDownload(id)
+            for (name in itemKeyTexts(ids)) manager.removeDownload(name)
         }.onFailure { Log.w(TAG, "could not remove ${ids.size} downloads", it) }
         for (id in ids) settle(id, false)
     }
 
     /** Stops downloads that have not finished and forgets them. */
-    fun cancel(ids: List<String>) {
+    fun cancel(ids: List<ItemKey>) {
         if (ids.isEmpty()) return
         unmark(ids)
         remove(ids)
@@ -522,7 +531,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         publish()
         main.post {
             refreshMarks()
-            for (id in ids) manager.removeDownload(id)
+            for (name in itemKeyTexts(ids)) manager.removeDownload(name)
         }
     }
 
@@ -766,10 +775,11 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     private inner class TrackedDownloaders(private val inner: DownloaderFactory) : DownloaderFactory {
         override fun createDownloader(request: DownloadRequest): Downloader {
             val downloader = inner.createDownloader(request)
-            val flow = progressOf(request.id)
+            val id = request.key
+            val flow = progressOf(id)
             return object : Downloader {
                 override fun download(listener: Downloader.ProgressListener?) {
-                    val slot = DownloadsJni.open(DownloadsJni.h, request.id, SystemClock.elapsedRealtime())
+                    val slot = DownloadsJni.open(DownloadsJni.h, id.source, id.id, SystemClock.elapsedRealtime())
                     downloader.download { length, bytes, percent ->
                         listener?.onProgress(length, bytes, percent)
                         val f = DownloadsJni.note(DownloadsJni.h, slot, length, bytes, SystemClock.elapsedRealtime())
@@ -777,7 +787,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
                     }
                     // Returning is what has media3 and the core write the song down as downloaded, both durably;
                     // its bytes must be on the disk first, or a phone dying now keeps a song that is empty files.
-                    syncToDisk(request.customCacheKey ?: sources.downloadKey(request.id))
+                    syncToDisk(request.customCacheKey ?: sources.downloadKey(id))
                 }
                 override fun cancel() = downloader.cancel()
                 override fun remove() = downloader.remove()
@@ -843,12 +853,12 @@ internal object DownloadsJni {
     @JvmStatic external fun attach(core: Long): Long
     @JvmStatic external fun release(h: Long)
     /** Whether a song is in the downloads table: 0 no, [PENDING] queued or failed, [DONE] downloaded. */
-    @JvmStatic @FastNative external fun held(h: Long, id: String): Int
-    @JvmStatic external fun followed(h: Long, id: String, state: Int, now: Long): Int
-    @JvmStatic external fun removed(h: Long, id: String): Int
-    @JvmStatic external fun unmark(h: Long, id: String): Int
-    @JvmStatic external fun startFraction(h: Long, id: String): Float
-    @JvmStatic external fun open(h: Long, id: String, now: Long): Int
+    @JvmStatic @FastNative external fun held(h: Long, source: String?, id: String): Int
+    @JvmStatic external fun followed(h: Long, source: String?, id: String, state: Int, now: Long): Int
+    @JvmStatic external fun removed(h: Long, source: String?, id: String): Int
+    @JvmStatic external fun unmark(h: Long, source: String?, id: String): Int
+    @JvmStatic external fun startFraction(h: Long, source: String?, id: String): Float
+    @JvmStatic external fun open(h: Long, source: String?, id: String, now: Long): Int
     /** Per chunk: the progress to show, or NaN when it has not moved enough to draw. */
     @JvmStatic @CriticalNative external fun note(h: Long, slot: Int, length: Long, bytes: Long, now: Long): Float
     /** A [NoticeChange] by its ordinal. */
@@ -876,8 +886,8 @@ object DownloadLines {
     private val out = StringBuilder(64)
 
     /** A song's second line: its artist, then, while it runs, "45% · 2.1 MB/s · 1:20 left". */
-    fun row(res: Resources, id: String): String {
-        val artist = DownloadFacts.row(DownloadsJni.h, id, facts) ?: return ""
+    fun row(res: Resources, id: ItemKey): String {
+        val artist = DownloadFacts.row(DownloadsJni.h, id.source, id.id, facts) ?: return ""
         if (facts[0] == 0L) return artist
         out.setLength(0)
         out.append(artist)
@@ -926,7 +936,7 @@ internal object DownloadFacts {
     init { System.loadLibrary("norimusic") }
 
     /** A song's artist (null when the id is null), and `[running, percent, speed_bps, eta_s]` into [out]. */
-    @JvmStatic @FastNative external fun row(h: Long, id: String, out: LongArray): String?
+    @JvmStatic @FastNative external fun row(h: Long, source: String?, id: String, out: LongArray): String?
     /** The batch's `[speed_bps, eta_s]` into [out]. */
     @JvmStatic @FastNative external fun speedEta(h: Long, out: LongArray)
 }
@@ -1064,3 +1074,7 @@ class DownloadWorker : DownloadService(DOWNLOAD_NOTIFICATION, 1000L, CHANNEL, an
         return all.progressNotification(this, downloads, notMetRequirements)
     }
 }
+
+/** The song a media3 download request is for: its id is the song's key as text (`ItemKey::text`). */
+private val DownloadRequest.key: ItemKey get() = listOf(this).keys().single()
+private fun List<DownloadRequest>.keys(): List<ItemKey> = itemKeysOf(map { it.id })

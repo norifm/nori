@@ -24,10 +24,10 @@ const CHUNK: usize = 256 * 1024;
 /// Taken keys remembered before they are cleared in bulk.
 const TAKEN_KEPT: usize = 256;
 
-/// A song to fetch ahead: id, URL and cache key.
+/// A song to fetch ahead: its key, URL and cache key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AheadSong {
-    pub id: String,
+    pub id: nori_player::key::ItemKey,
     pub url: String,
     pub key: String,
 }
@@ -381,7 +381,7 @@ mod tests {
     }
 
     fn songs(ids: &[&str]) -> Vec<AheadSong> {
-        ids.iter().map(|id| AheadSong { id: id.to_string(), url: format!("http://m/{id}"), key: format!("{id}:0") }).collect()
+        ids.iter().map(|id| AheadSong { id: nori_player::key::ItemKey::own(*id), url: format!("http://m/{id}"), key: format!("{id}:0") }).collect()
     }
 
     /// Waits until the held song paused after its first chunk.

@@ -161,7 +161,10 @@ final class ItemCell: UITableViewCell {
         number.text = item.track > 0 ? "\(item.track)" : ""
         coverWidth.constant = bare ? 24 : 44
         cover.layer.cornerRadius = item.kind == "artist" ? 22 : Radius.cover
-        if !cover.isHidden { cover.show(item.cover, points: 44) }
+        if !cover.isHidden {
+            cover.show(item.cover, points: 44)
+            cover.showSource(item.mark)
+        }
         accessoryType = .none
     }
 
@@ -254,6 +257,7 @@ final class CardCell: UICollectionViewCell {
         detail.textAlignment = title.textAlignment
         cover.layer.cornerRadius = item.kind == "artist" ? width / 2 : Radius.cover
         cover.show(item.cover, points: width)
+        cover.showSource(item.mark)
     }
 
     override func prepareForReuse() {

@@ -21,9 +21,9 @@
   import PageTools from "../ui/PageTools.svelte";
   import SongList from "../ui/SongList.svelte";
 
-  let { id }: { id: string } = $props();
+  let { id, source, mixed = false }: { id: string; source?: string; mixed?: boolean } = $props();
   const page = reading("playlist", async () => {
-    const d = await read<{ playlist: Playlist; songs: Song[]; seconds: number }>({ kind: "playlist", id });
+    const d = await read<{ playlist: Playlist; songs: Song[]; seconds: number }>({ kind: "playlist", id, source, mixed });
     return { ...d, tools: JSON.parse(await ask<string>("page_actions", "Playlist", d.songs.length)) as string[] };
   });
   // The answer while it is this page's: the page stays mounted when another playlist opens over it.

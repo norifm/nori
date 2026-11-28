@@ -167,7 +167,7 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
 
     private func readIfChanged() {
         let n = Core.shared.now
-        let key = "\(n.index) \(n.length) \(n.shuffle) \(n.repeatMode) \(n.song?.id ?? "")"
+        let key = "\(n.index) \(n.length) \(n.shuffle) \(n.repeatMode) \(n.song?.key ?? "")"
         if key != seen { read() }
     }
 
@@ -185,7 +185,7 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
 
     private func read() {
         let n = Core.shared.now
-        seen = "\(n.index) \(n.length) \(n.shuffle) \(n.repeatMode) \(n.song?.id ?? "")"
+        seen = "\(n.index) \(n.length) \(n.shuffle) \(n.repeatMode) \(n.song?.key ?? "")"
         if token != 0 { Core.shared.forget(token) }
         token = Core.shared.read(NORI_PAGE_QUEUE) { [weak self] a in self?.took(a) }
     }
@@ -207,10 +207,10 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
         if !opened, !now.isEmpty {
             opened = true
             table.scrollToRow(at: playing, at: .top, animated: false)
-        } else if !now.isEmpty, following, now.first?.id != followed, !table.hasActiveDrag {
+        } else if !now.isEmpty, following, now.first?.key != followed, !table.hasActiveDrag {
             table.scrollToRow(at: playing, at: .top, animated: !Motion.plain)
         }
-        followed = now.first?.id
+        followed = now.first?.key
     }
 
     private func items(_ section: Int) -> [Item] {
@@ -392,7 +392,7 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
             nori_ios_remove(Int32(item.index))
             done(true)
             self?.read()
-            self?.offerUndo(Say.queueRemoved(item.title.isEmpty ? item.id : item.title), .song(item.id))
+            self?.offerUndo(Say.queueRemoved(item.title.isEmpty ? item.id : item.title), .song(item.key))
         }
         return UISwipeActionsConfiguration(actions: [remove])
     }
@@ -509,6 +509,7 @@ final class QueueCell: UITableViewCell {
     /// `note` in place of the artist; who asked for a jam's song after it.
     func show(_ item: Item, played: Bool, playing: Bool, movable: Bool, note: String? = nil) {
         cover.show(item.cover, points: 44)
+        cover.showSource(item.mark)
         title.text = item.title.isEmpty ? item.id : item.title
         detail.text = note ?? ([item.subtitle, item.by].filter { !$0.isEmpty }.joined(separator: " · "))
         title.font = Fonts.font(16, playing ? .semibold : .regular)

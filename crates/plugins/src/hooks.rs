@@ -68,7 +68,7 @@ type Lines = Arc<Vec<(u32, String)>>;
 
 /// The synced lyrics of the songs heard, by id.
 #[derive(Default)]
-struct Lyrics(HashMap<String, SongLyrics>);
+struct Lyrics(HashMap<nori_model::ItemKey, SongLyrics>);
 
 #[derive(Clone)]
 enum SongLyrics {
@@ -165,7 +165,7 @@ impl Plugins {
                 drop(lyrics);
                 let (me, library) = (self.me.clone(), self.library());
                 let fetch = move || {
-                    let song = library.as_ref().and_then(|l| l.songs(std::slice::from_ref(&id)).ok()?.into_iter().next());
+                    let song = library.as_ref().and_then(|l| l.queued(&id));
                     let lines = song.and_then(|s| library?.synced_lyrics(&s)).filter(|l| !l.is_empty()).map(Arc::new);
                     let Some(p) = me.upgrade() else { return };
                     let had = lines.is_some();
@@ -266,7 +266,7 @@ impl Plugins {
         if (moment.song.as_ref(), moment.index) != (was.song.as_ref(), was.index) {
             let library = self.library();
             self.tell(Hook::SongChanged, || {
-                let song = moment.song.as_ref().zip(library).and_then(|(id, l)| l.songs(std::slice::from_ref(id)).ok()?.into_iter().next());
+                let song = moment.song.as_ref().zip(library).and_then(|(id, l)| l.queued(id));
                 Event::SongChanged(song.as_ref().map(song_out))
             });
         }

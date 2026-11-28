@@ -93,11 +93,11 @@ impl App {
             Some(Page::Artist { id, .. }) => Some(PageOrigin::new(OriginKind::Artist, id.clone())),
             _ => None,
         };
-        let starred = self.starred(Starrable::Song, &song.id, song.starred);
-        let download = self.downloaded.get(&song.id).copied().unwrap_or(SongDownload::None);
-        let lyrics = self.lyrics.found().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) && self.song.as_ref().is_some_and(|s| s.id == song.id);
+        let starred = self.starred(Starrable::Song, &nori_core::Keyed::key(song), song.starred);
+        let download = self.downloaded.get(&nori_core::Keyed::key(song)).copied().unwrap_or(SongDownload::None);
+        let lyrics = self.lyrics.found().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) && self.song.as_ref().is_some_and(|s| nori_core::Keyed::key(s) == nori_core::Keyed::key(song));
         let r = &self.rules;
-        let items = nori_core::menus::song_menu(song.clone(), starred, self.excluded.contains(&song.id), download, player, lyrics, r.stars, r.account, r.playlists, r.downloads, r.radio, self.guest(), page);
+        let items = nori_core::menus::song_menu(song.clone(), starred, self.excluded.contains(&nori_core::Keyed::key(song)), download, player, lyrics, r.stars, r.account, r.playlists, r.downloads, r.radio, self.guest(), page);
         let mut lines = Vec::with_capacity(items.len() + 1);
         let mut more = false;
         for i in items.into_iter().filter(|i| offered(&i.action) && i.enabled) {
@@ -145,9 +145,9 @@ impl App {
             _ => (None, 0),
         };
         let fetch = match &item {
-            Item::Album(a) => Some(Fetch::Album(a.id.clone())),
-            Item::Playlist(p) => Some(Fetch::Playlist(p.id.clone())),
-            Item::Artist(a) => Some(Fetch::Artist(a.id.clone())),
+            Item::Album(a) => Some(Fetch::Album(a.id.clone(), a.source.clone())),
+            Item::Playlist(p) => Some(Fetch::Playlist(p.id.clone(), nori_core::sources::playlist_at(p))),
+            Item::Artist(a) => Some(Fetch::Artist(a.id.clone(), a.source.clone())),
             Item::Mix(m) => Some(Fetch::Mix(m.id.clone())),
             _ => None,
         };
@@ -163,7 +163,7 @@ impl App {
             (MenuAct::Edit(_), None) => {}
             (MenuAct::RenamePlaylist, _) => {
                 if let Some(d) = self.own_playlist() {
-                    let target = Target::PlaylistName(d.playlist.id.clone());
+                    let target = Target::PlaylistName(d.playlist.clone());
                     self.overlay = Some(Overlay::Input { title: crate::text::RENAME_PLAYLIST.into(), text: d.playlist.name.clone(), secret: false, target });
                 }
             }
@@ -182,11 +182,10 @@ impl App {
         }
     }
 
-    /// The playlist page shown, when it is the account's own to change ([`nori_core::menus::playlist_editable`]).
+    /// The playlist page shown, when the profile may change it (the core's `playlist_editable_in`).
     fn own_playlist(&self) -> Option<&nori_core::PlaylistDetail> {
-        let Some(Page::Playlist { detail: Load::Ready(d), .. }) = self.page() else { return None };
-        let user = self.prefs.active_server().map_or("", |s| s.user.as_str());
-        nori_core::menus::playlist_editable(&d.playlist, user, self.rules.playlists).then_some(d)
+        let Some(Page::Playlist { detail: Load::Ready(d), editable: true, .. }) = self.page() else { return None };
+        Some(d)
     }
 
     /// What `song`'s row `at` of the account's own playlist shown offers to change.
@@ -197,14 +196,12 @@ impl App {
 
     fn edit_row(&mut self, e: PlaylistEdit, song: &Song, at: usize) {
         let Some(d) = self.own_playlist().filter(|d| d.songs.get(at).is_some_and(|s| s.id == song.id)) else { return };
-        let (id, ids) = (d.playlist.id.clone(), d.songs.iter().map(|s| s.id.clone()).collect());
+        let (playlist, songs) = (d.playlist.clone(), d.songs.iter().map(|s| s.id.clone()).collect());
         let said = match e {
             PlaylistEdit::Remove => crate::text::removed_from(&d.playlist.name),
             PlaylistEdit::MoveUp | PlaylistEdit::MoveDown => crate::text::MOVED.into(),
         };
-        if let Some(write) = nori_core::menus::playlist_edit_write(id.clone(), ids, at as u32, e) {
-            self.cmds.push(Cmd::EditPlaylist { id, write, said });
-        }
+        self.cmds.push(Cmd::EditPlaylist { playlist, change: nori_host::session::PlaylistChange::Edit { songs, index: at as u32, edit: e }, said });
     }
 
     fn song_act(&mut self, a: SongAction, s: Song) {
@@ -212,21 +209,21 @@ impl App {
             SongAction::Favourite { .. } => self.star_song(s),
             SongAction::PlayNext => self.cmds.push(Cmd::Enqueue(vec![s], true)),
             SongAction::AddToQueue => self.cmds.push(Cmd::Enqueue(vec![s], false)),
-            SongAction::AddToPlaylist => self.pick_playlist(vec![s.id]),
-            SongAction::RemoveDownload => self.ask_remove(vec![s.id]),
+            SongAction::AddToPlaylist => self.pick_playlist(vec![s]),
+            SongAction::RemoveDownload => self.ask_remove(vec![nori_core::Keyed::key(&s)]),
             SongAction::Download => self.cmds.push(Cmd::Download(vec![s])),
-            SongAction::GoToAlbum { id } => self.open_album(id),
-            SongAction::GoToArtist { id, .. } => self.open_artist(id),
+            SongAction::GoToAlbum { id } => self.open_album(id, s.source),
+            SongAction::GoToArtist { id, .. } => self.open_artist(id, s.source),
             SongAction::Lyrics => self.set_panel(Panel::Lyrics),
-            SongAction::Radio => self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id), false)),
-            SongAction::ExcludeFromMixes { on } => self.cmds.push(Cmd::ExcludeFromMixes(s.id, on)),
+            SongAction::Radio => self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id, s.source), false)),
+            SongAction::ExcludeFromMixes { on } => self.cmds.push(Cmd::ExcludeFromMixes(nori_core::Keyed::key(&s), on)),
             SongAction::SleepTimer => self.pick_sleep(),
             SongAction::StopDownload | SongAction::AddToLibrary | SongAction::Share | SongAction::Details => {}
         }
     }
 
     /// The account's playlists to add `songs` to, a new one first.
-    pub(crate) fn pick_playlist(&mut self, songs: Vec<String>) {
+    pub(crate) fn pick_playlist(&mut self, songs: Vec<Song>) {
         // The playlists come from the core (`Data::PlaylistChoices`), after New playlist.
         let options = vec![(crate::text::NEW_PLAYLIST.to_string(), String::new())];
         self.cmds.push(Cmd::Load(crate::backend::Req::PlaylistChoices(songs.clone())));
@@ -234,7 +231,7 @@ impl App {
     }
 
     /// Asks before downloads `ids` are removed.
-    pub(crate) fn ask_remove(&mut self, ids: Vec<String>) {
+    pub(crate) fn ask_remove(&mut self, ids: Vec<nori_core::ItemKey>) {
         let (title, note) = crate::text::remove_downloads(ids.len());
         self.overlay = Some(Overlay::Confirm { title, lines: vec![note.into()], yes: crate::text::REMOVE.into(), cmd: Box::new(Cmd::DownloadRemove(ids)) });
     }

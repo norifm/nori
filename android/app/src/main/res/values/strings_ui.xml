@@ -412,6 +412,11 @@
     <string name="cert_not_pkcs12">This isn’t a .p12 certificate with its key.</string>
     <string name="cert_unsupported">This certificate is encrypted in a way nori doesn’t read.</string>
     <string name="scrobbling">Scrobbling</string>
+    <string name="sources">Sources</string>
+    <string name="add_source">Add source</string>
+    <string name="source_sign_in">Sign in to a new one</string>
+    <string name="source_earlier">Move up</string>
+    <string name="source_later">Move down</string>
     <string name="scrobbling_hint">Plays go to each one that’s on, whatever this profile plays from</string>
     <string name="lastfm">Last.fm</string>
     <string name="librefm">Libre.fm</string>
@@ -455,6 +460,8 @@
     <string name="said_excluded_from_mixes">Excluded from mixes</string>
     <string name="said_back_in_mixes">Back in mixes</string>
     <string name="said_added_to_playlist">Added to %1$s</string>
+    <string name="said_takes_only_its_songs">%1$s is on %2$s, so it takes only songs from there</string>
+    <string name="only_songs_from">Only songs from %1$s</string>
     <string name="said_playlist_created">Created %1$s</string>
     <string name="said_server_downloading">The server is downloading it into your library</string>
     <string name="said_failed">Failed</string>

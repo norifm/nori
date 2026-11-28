@@ -2,6 +2,7 @@
 //! as octo-fiesta's hub does (rooms, held polls, jam invites, guests acting with the host's rights): two
 //! devices of one account controlling each other, and a jam with a host, an admin and a guest.
 
+use nori_core::ItemKey;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -820,7 +821,7 @@ impl Device {
     fn playing(&self, ids: &[&str], start: u32) {
         let songs: Vec<Song> = ids.iter().map(|id| Song { id: id.to_string(), title: id.to_uppercase(), duration: 200, ..Default::default() }).collect();
         self.core.session.register(songs);
-        self.core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(start), false, None);
+        self.core.session.set(ids.iter().map(|s| s.to_string()).map(ItemKey::own).collect(), Some(start), false, None);
         self.remote.clone().played(Playing { playing: true, position_ms: 5_000, index: None, volume: Some(40), ..Default::default() });
     }
 
@@ -849,7 +850,7 @@ fn returning_here_does_not_wait_for_a_dead_device() {
         let picked_at = relay.sim.now_us();
         desk.until("the controls here", |r| r.active().is_none().then_some(()));
         assert!(relay.sim.now_us() - picked_at <= 3_000_000, "a dead device holds the controls no longer than a command shows");
-        assert_eq!(desk.core.session.playlist(|p| p.ids().to_vec()), ["local"], "the stored local queue remains usable");
+        assert_eq!(desk.core.session.playlist(|p| p.ids().to_vec()), [ItemKey::own("local")], "the stored local queue remains usable");
         let request = || relay.hub.lock().rooms["u:ann"].events.iter().find_map(|(_, from, _, body)| match body {
             Body::Command { id, op } if from == &desk.remote.id() && matches!(op.as_ref(), Op::Transfer { to, .. } if to == &desk.remote.id()) => Some(*id),
             _ => None,
@@ -962,13 +963,13 @@ fn a_like_where_the_music_plays_shows_on_every_page() {
     phone.remote.clone().watch(true);
     phone.remote.clone().discover_active(true);
     phone.until("the desk followed", |r| r.active());
-    let marked = |d: &Device, id: &str| d.remote.star_marks().songs.get(id).copied();
+    let marked = |d: &Device, id: &str| d.remote.star_marks().songs.get(&nori_core::ItemKey::own(id)).copied();
     // Liked from the phone's player, starred on the desk: the phone's pages show it as well.
-    assert!(phone.remote.clone().star_where_playing("a".into(), true));
+    assert!(phone.remote.clone().star_where_playing(nori_core::ItemKey::own("a"), true));
     assert_eq!(marked(&phone, "a"), Some(true));
     // Liked on the desk: the phone hears it in the desk's queue.
     relay.sim.run("a request", desk.client.star(Starrable::Song, "b".into(), true, Arc::new(NoMarks))).unwrap();
-    phone.until("the desk's like", |r| r.star_marks().songs.get("b").copied().filter(|on| *on));
+    phone.until("the desk's like", |r| r.star_marks().songs.get(&nori_core::ItemKey::own("b")).copied().filter(|on| *on));
     relay.close();
 }
 
@@ -1132,7 +1133,7 @@ fn a_handoff_counts_one_listen() {
         phone.core.session.register(vec![song]);
         let now = relay.sim.now_us() / 1_000;
         let started = nori_core::db::now_ms() - heard;
-        phone.core.session.scrobble_track(Some("long".into()), TrackChange::Moved, true, now - heard, started, 0);
+        phone.core.session.scrobble_track(Some(ItemKey::own("long")), TrackChange::Moved, true, now - heard, started, 0);
         phone.remote.clone().serve(true);
         desk.remote.clone().watch(true);
         desk.until("the phone", |r| r.devices().into_iter().find(|d| d.name == "Phone"));
@@ -1150,7 +1151,7 @@ fn a_handoff_counts_one_listen() {
         desk.core.session.register(songs);
         let now = relay.sim.now_us() / 1_000;
         phone.core.session.scrobble_playing(false, now);
-        desk.core.session.scrobble_track(Some("long".into()), TrackChange::Moved, true, now, nori_core::db::now_ms(), 0);
+        desk.core.session.scrobble_track(Some(ItemKey::own("long")), TrackChange::Moved, true, now, nori_core::db::now_ms(), 0);
         let donor = phone.core.session.scrobble_track(None, TrackChange::Ended, false, now, nori_core::db::now_ms(), 0);
         let receiver = desk.core.session.scrobble_track(None, TrackChange::Ended, false, now + heard, nori_core::db::now_ms() + heard, 0);
         assert_eq!(donor.counted, None, "the old device no longer owns the listen");
@@ -1178,10 +1179,10 @@ fn a_handoff_during_a_mix_carries_it_on() {
     session.settings.put(prefs);
     phone.playing(&["s1", "s2", "s3"], 1);
     session.planner.transition_window(
-        ["s1", "s2", "s3"].into_iter().map(|id| nori_player::transitions::WindowSong { id: id.into(), duration_ms: 200_000, ..Default::default() }).collect(),
+        ["s1", "s2", "s3"].into_iter().map(|id| nori_player::transitions::WindowSong { id: ItemKey::own(id), duration_ms: 200_000, ..Default::default() }).collect(),
         false,
     );
-    let plan = session.planner.plan_for("s1").expect("a crossfade out of s1");
+    let plan = session.planner.plan_for(&ItemKey::own("s1")).expect("a crossfade out of s1");
     // Three seconds into the crossfade: s2 is the song shown, s1's ending still sounds.
     phone.remote.clone().played(Playing {
         playing: true,
@@ -1207,7 +1208,7 @@ fn a_handoff_during_a_mix_carries_it_on() {
         }
         op => panic!("{op:?}"),
     }
-    assert_eq!(desk.core.session.planner.plan_for("s1"), Some(plan), "the desk mixes on by the phone's plan");
+    assert_eq!(desk.core.session.planner.plan_for(&ItemKey::own("s1")), Some(plan), "the desk mixes on by the phone's plan");
     relay.close();
 }
 
@@ -1315,7 +1316,7 @@ fn a_jam_takes_requests_through_its_host() {
 
     // What the host plays, as a guest's player shows it: the song, the queue around it, who added each.
     host.core.session.register(vec![blue]);
-    host.core.session.take(2, vec!["s5".into()], vec![Hand::Last]);
+    host.core.session.take(2, vec![ItemKey::own("s5")], vec![Hand::Last]);
     let said_before = relay.sim.now_us();
     host.remote.clone().played(Playing { playing: true, position_ms: 9_000, index: Some(0), ..Default::default() });
     let m = gus.until("the host's queue in Gus's player", |r| r.jam_playing().filter(|m| m.rows.len() == 3));
@@ -1877,8 +1878,9 @@ fn a_device_playing_elsewhere_is_mirrored_whole() {
     assert!(!m.playing);
     assert_eq!(phone.told(), Op::Pause);
     desk.remote.clone().send(phone_id.clone(), Op::Volume { percent: 15 });
-    assert!(desk.remote.clone().star_where_playing("s60".into(), true), "a song of its queue is starred there");
-    assert!(!desk.remote.clone().star_where_playing("elsewhere".into(), true), "any other here");
+    assert!(desk.remote.clone().star_where_playing(nori_core::ItemKey::own("s60"), true), "a song of its queue is starred there");
+    assert!(!desk.remote.clone().star_where_playing(nori_core::ItemKey::own("elsewhere"), true), "any other here");
+    assert!(!desk.remote.clone().star_where_playing(nori_core::ItemKey { source: Some("acct2".into()), id: "s60".into() }, true), "another source's song of the same id here");
     let m = desk.remote.active().unwrap();
     assert_eq!(m.volume, Some(15));
     assert!(m.rows[m.at.unwrap() as usize].song.starred);
@@ -1949,11 +1951,11 @@ fn a_mirrored_queue_is_cleared_and_put_back_in_its_place() {
     match phone.told() {
         Op::Restore { song, index } => {
             assert_eq!((song.id.as_str(), song.title.as_str(), index), ("s3", "S3", 2));
-            assert!(phone.core.session.restore(song.id).at.is_some(), "the phone's own undo knows its place");
+            assert!(phone.core.session.restore(ItemKey::own(song.id)).at.is_some(), "the phone's own undo knows its place");
         }
         op => panic!("{op:?}"),
     }
-    assert_eq!(phone.core.session.playlist(|p| p.ids().to_vec()), ["s1", "s2", "s3", "s4", "s5"]);
+    assert_eq!(phone.core.session.playlist(|p| p.ids().iter().map(|k| k.id.clone()).collect::<Vec<_>>()), ["s1", "s2", "s3", "s4", "s5"]);
     assert!(!desk.remote.clone().put_back(phone_id.clone(), "s3".into()), "put back once");
 
     // Clear: the phone's player clears its queue, and the desk's undo has it put back what it took.
@@ -2445,7 +2447,7 @@ impl Device {
     /// Has songs `ids` queued, paused at the first.
     fn queued(&self, ids: &[&str]) {
         self.core.session.register(ids.iter().map(|id| Song { id: id.to_string(), duration: 200, ..Default::default() }).collect());
-        self.core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(0), false, None);
+        self.core.session.set(ids.iter().map(|s| s.to_string()).map(ItemKey::own).collect(), Some(0), false, None);
         self.remote.clone().played(Playing { playing: false, position_ms: 6_000, ..Default::default() });
     }
 }
@@ -2493,7 +2495,7 @@ fn sung() -> (Song, nori_player::automix::analysis::Analyzer, String) {
 fn lyrics_view(d: &Device, id: &str) -> Arc<LyricsView> {
     let view = Arc::new(LyricsView::default());
     let (client, id, shown) = (d.client.clone(), id.to_string(), view.clone());
-    d.sim.spawn(Box::pin(async move { let _ = client.lyrics_for(id, shown).await; }));
+    d.sim.spawn(Box::pin(async move { let _ = client.lyrics_for(ItemKey::own(id), shown).await; }));
     view
 }
 
@@ -2506,8 +2508,8 @@ fn a_jam_guest_shows_the_hosts_lyrics() {
     let (song, measured, answer) = sung();
     *relay.lrclib.lock() = Some(answer);
     host.core.session.register(vec![song.clone()]);
-    host.core.session.set(vec![song.id.clone()], Some(0), false, None);
-    host.core.analysis_finish(&song.id, measured).unwrap().expect("measured");
+    host.core.session.set(vec![ItemKey::own(song.id.clone())], Some(0), false, None);
+    host.core.analysis_finish(&nori_core::Keyed::key(&song), measured).unwrap().expect("measured");
     host.remote.clone().played(Playing { playing: true, position_ms: 5_000, ..Default::default() });
     let link = opened(&host);
     let pass = joined(&relay, link, "Gus".into());
@@ -2522,7 +2524,7 @@ fn a_jam_guest_shows_the_hosts_lyrics() {
     assert_eq!(*at_gus.0.lock(), at_host.0.lock().last().cloned().into_iter().collect::<Vec<_>>(), "only the host's, nothing of Gus's own");
 
     let shown = at_gus.0.lock().last().cloned().unwrap();
-    assert_eq!(gus.core.lyrics_nudge(song.id.clone(), shown, 1).lyrics.timing, checked, "not a guest's to move");
+    assert_eq!(gus.core.lyrics_nudge(ItemKey::own(song.id.clone()), shown, 1).lyrics.timing, checked, "not a guest's to move");
     relay.close();
 }
 
@@ -2538,9 +2540,9 @@ fn lyrics_show_as_the_device_playing_them_times_them() {
     // The phone queued the song before but never heard it; the desk plays it and measured it.
     for d in [&desk, &phone] {
         d.core.session.register(vec![song.clone()]);
-        d.core.session.set(vec![song.id.clone()], Some(0), false, None);
+        d.core.session.set(vec![ItemKey::own(song.id.clone())], Some(0), false, None);
     }
-    desk.core.analysis_finish(&song.id, measured).unwrap().expect("measured");
+    desk.core.analysis_finish(&nori_core::Keyed::key(&song), measured).unwrap().expect("measured");
     desk.remote.clone().played(Playing { playing: true, position_ms: 5_000, ..Default::default() });
     phone.remote.clone().played(Playing { playing: false, position_ms: 0, ..Default::default() });
     for d in [&desk, &phone] {
@@ -2559,11 +2561,11 @@ fn lyrics_show_as_the_device_playing_them_times_them() {
 
     // A step sooner on the phone moves the desk's too, and one later on the desk the phone's.
     let shown = on_phone.0.lock().last().cloned().unwrap();
-    let sooner = phone.core.lyrics_nudge(song.id.clone(), shown, 1).lyrics.timing;
+    let sooner = phone.core.lyrics_nudge(ItemKey::own(song.id.clone()), shown, 1).lyrics.timing;
     assert!(matches!(sooner, LyricsTiming::Yours { .. }), "{sooner:?}");
     desk.until("the phone's nudge on the desk", |_| (at_desk.timing() == Some(sooner)).then_some(()));
     let shown = at_desk.0.lock().last().cloned().unwrap();
-    let later = desk.core.lyrics_nudge(song.id.clone(), shown, -1).lyrics.timing;
+    let later = desk.core.lyrics_nudge(ItemKey::own(song.id.clone()), shown, -1).lyrics.timing;
     assert_ne!(later, sooner);
     phone.until("the desk's nudge on the phone", |_| (on_phone.timing() == Some(later)).then_some(()));
     relay.close();
@@ -3162,7 +3164,7 @@ fn jam_controls_reach_by_role() {
     host.core.session.register(vec![blue]);
     host.core
         .session
-        .set(vec!["s5".into()], Some(0), false, None);
+        .set(vec![ItemKey::own("s5")], Some(0), false, None);
     host.remote.clone().played(Playing {
         playing: true,
         index: Some(0),
@@ -3186,7 +3188,7 @@ fn jam_controls_reach_by_role() {
     host.core.session.register(vec![song]);
     host.core
         .session
-        .take(1, vec!["s4".into()], vec![Hand::Last]);
+        .take(1, vec![ItemKey::own("s4")], vec![Hand::Last]);
     host.remote.clone().played(Playing {
         playing: true,
         index: Some(0),

@@ -10,19 +10,19 @@ use jni::JNIEnv;
 use nori_core::transfers::{Downloads, Notice, NoticeChange, NoticeKind, SummaryText, SummaryTitle, Tracker};
 use nori_core::Core;
 
-use crate::{java_string, native, with_str, Class, Handles};
+use crate::{java_string, native, with_key, Class, Handles};
 
 pub(crate) static DOWNLOADS: Class = Class {
     name: c"dev/nori/music/downloads/DownloadsJni",
     methods: &[
         native!(c"attach", c"(J)J", attach),
         native!(c"release", c"(J)V", release),
-        native!(c"held", c"(JLjava/lang/String;)I", held),
-        native!(c"followed", c"(JLjava/lang/String;IJ)I", followed),
-        native!(c"removed", c"(JLjava/lang/String;)I", removed),
-        native!(c"unmark", c"(JLjava/lang/String;)I", unmark),
-        native!(c"startFraction", c"(JLjava/lang/String;)F", start_fraction),
-        native!(c"open", c"(JLjava/lang/String;J)I", open),
+        native!(c"held", c"(JLjava/lang/String;Ljava/lang/String;)I", held),
+        native!(c"followed", c"(JLjava/lang/String;Ljava/lang/String;IJ)I", followed),
+        native!(c"removed", c"(JLjava/lang/String;Ljava/lang/String;)I", removed),
+        native!(c"unmark", c"(JLjava/lang/String;Ljava/lang/String;)I", unmark),
+        native!(c"startFraction", c"(JLjava/lang/String;Ljava/lang/String;)F", start_fraction),
+        native!(c"open", c"(JLjava/lang/String;Ljava/lang/String;J)I", open),
         native!(c"note", c"(JIJJJ)F", note),
         native!(c"notice", c"(JIIJ)I", notice),
         native!(c"noticeFacts", c"(J[J)Ljava/lang/String;", notice_facts),
@@ -33,7 +33,7 @@ pub(crate) static DOWNLOADS: Class = Class {
 pub(crate) static LINES: Class = Class {
     name: c"dev/nori/music/downloads/DownloadFacts",
     methods: &[
-        native!(c"row", c"(JLjava/lang/String;[J)Ljava/lang/String;", row),
+        native!(c"row", c"(JLjava/lang/String;Ljava/lang/String;[J)Ljava/lang/String;", row),
         native!(c"speedEta", c"(J[J)V", speed_eta),
     ],
 };
@@ -61,30 +61,30 @@ extern "system" fn release(_: JNIEnv, _: JClass, h: jlong) {
 }
 
 /// 0 not downloaded, 1 queued or failed, 2 finished. Called per list row.
-extern "system" fn held(env: JNIEnv, _: JClass, h: jlong, id: JString) -> jint {
+extern "system" fn held(env: JNIEnv, _: JClass, h: jlong, source: JString, id: JString) -> jint {
     let Some(d) = ATTACHED.get(h) else { return 0 };
-    with_str(&env, &id, |id| d.held().state(id).code()).unwrap_or(0)
+    with_key(&env, &source, &id, |id| d.held().state(id).code()).unwrap_or(0)
 }
 
 /// media3 reported `id` in `state`; returns `Tracker::followed`'s flags.
-extern "system" fn followed(env: JNIEnv, _: JClass, h: jlong, id: JString, state: jint, now: jlong) -> jint {
-    with_str(&env, &id, |id| with(h, |t| t.followed(id, state, now))).flatten().unwrap_or(0)
+extern "system" fn followed(env: JNIEnv, _: JClass, h: jlong, source: JString, id: JString, state: jint, now: jlong) -> jint {
+    with_key(&env, &source, &id, |id| with(h, |t| t.followed(id, state, now))).flatten().unwrap_or(0)
 }
 
-extern "system" fn removed(env: JNIEnv, _: JClass, h: jlong, id: JString) -> jint {
-    with_str(&env, &id, |id| with(h, |t| t.removed(id))).flatten().unwrap_or(0)
+extern "system" fn removed(env: JNIEnv, _: JClass, h: jlong, source: JString, id: JString) -> jint {
+    with_key(&env, &source, &id, |id| with(h, |t| t.removed(id))).flatten().unwrap_or(0)
 }
 
-extern "system" fn unmark(env: JNIEnv, _: JClass, h: jlong, id: JString) -> jint {
-    with_str(&env, &id, |id| with(h, |t| t.forget(id))).flatten().unwrap_or(0)
+extern "system" fn unmark(env: JNIEnv, _: JClass, h: jlong, source: JString, id: JString) -> jint {
+    with_key(&env, &source, &id, |id| with(h, |t| t.forget(id))).flatten().unwrap_or(0)
 }
 
-extern "system" fn start_fraction(env: JNIEnv, _: JClass, h: jlong, id: JString) -> jfloat {
-    with_str(&env, &id, |id| with(h, |t| t.start_fraction(id))).flatten().unwrap_or(-1.0)
+extern "system" fn start_fraction(env: JNIEnv, _: JClass, h: jlong, source: JString, id: JString) -> jfloat {
+    with_key(&env, &source, &id, |id| with(h, |t| t.start_fraction(id))).flatten().unwrap_or(-1.0)
 }
 
-extern "system" fn open(env: JNIEnv, _: JClass, h: jlong, id: JString, now: jlong) -> jint {
-    with_str(&env, &id, |id| with(h, |t| t.open(id, now))).flatten().unwrap_or(-1)
+extern "system" fn open(env: JNIEnv, _: JClass, h: jlong, source: JString, id: JString, now: jlong) -> jint {
+    with_key(&env, &source, &id, |id| with(h, |t| t.open(id, now))).flatten().unwrap_or(-1)
 }
 
 /// A chunk arrived on `slot`.
@@ -138,16 +138,16 @@ extern "system" fn summary(env: JNIEnv, _: JClass, h: jlong, out: JIntArray) -> 
 }
 
 /// A song's row: returns its artist; `out` gets `[running, percent, speed_bps, eta_s]`.
-extern "system" fn row(env: JNIEnv, _: JClass, h: jlong, id: JString, out: JLongArray) -> jstring {
+extern "system" fn row(env: JNIEnv, _: JClass, h: jlong, source: JString, id: JString, out: JLongArray) -> jstring {
     // Copied out first, as in `notice_facts`.
-    let row = |id: &str| {
+    let row = |id: &nori_core::ItemKey| {
         with(h, |t| {
             let (artist, facts) = t.row(id);
             (facts, artist.to_string())
         })
         .unwrap_or_default()
     };
-    let Some((facts, artist)) = with_str(&env, &id, row) else {
+    let Some((facts, artist)) = with_key(&env, &source, &id, row) else {
         return std::ptr::null_mut();
     };
     let f = facts.map_or([0, 0, 0, 0], |f| [1, f.percent as jlong, f.speed_bps, f.eta_s]);

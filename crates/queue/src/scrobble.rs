@@ -5,7 +5,7 @@
 use std::sync::{Arc, Weak};
 
 use nori_db as db;
-use nori_model::{Listen, Song};
+use nori_model::{ItemKey, Listen, Song};
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
@@ -24,6 +24,8 @@ struct Current {
     song: Song,
     /// The database of the profile it started in.
     profile: Weak<Mutex<Connection>>,
+    /// The rows its play is recorded in: its source's, in that database.
+    rows: Weak<Mutex<Connection>>,
     /// When it started, wall clock ms.
     started_at: i64,
     heard_ms: i64,
@@ -43,13 +45,14 @@ impl Scrobbler {
         }
     }
 
-    /// Moves to `next`, started in `profile` at `wall_ms` unless it is the listen handed here; the song left.
-    fn switch(&mut self, next: Option<Song>, profile: Weak<Mutex<Connection>>, playing: bool, now_ms: i64, wall_ms: i64) -> Option<Current> {
+    /// Moves to `next` (with the rows its play goes to), started in `profile` at `wall_ms` unless it is the
+    /// listen handed here; the song left.
+    fn switch(&mut self, next: Option<(Song, Weak<Mutex<Connection>>)>, profile: Weak<Mutex<Connection>>, playing: bool, now_ms: i64, wall_ms: i64) -> Option<Current> {
         self.edge(false, now_ms);
         let incoming = self.incoming.take();
-        let next = next.map(|song| {
-            let handed = incoming.filter(|l| l.song_id == song.id);
-            Current { started_at: handed.as_ref().map_or(wall_ms, |l| l.started_ms), heard_ms: handed.map_or(0, |l| l.heard_ms.max(0)), song, profile }
+        let next = next.map(|(song, rows)| {
+            let handed = incoming.filter(|l| l.song_id == song.id && song.source.is_none());
+            Current { started_at: handed.as_ref().map_or(wall_ms, |l| l.started_ms), heard_ms: handed.map_or(0, |l| l.heard_ms.max(0)), song, profile, rows }
         });
         let done = std::mem::replace(&mut self.current, next);
         self.edge(playing, now_ms);
@@ -94,12 +97,12 @@ pub enum TrackChange {
     Ended,
 }
 
-/// The id to follow after a change: none once ended; a radio stream only when it loops.
-fn followed(id: Option<String>, why: TrackChange) -> Option<String> {
+/// The song to follow after a change: none once ended; a radio stream only when it loops.
+fn followed(id: Option<ItemKey>, why: TrackChange) -> Option<ItemKey> {
     match why {
         TrackChange::Ended => None,
         TrackChange::Looped => id,
-        TrackChange::Moved => id.filter(|i| !queue::is_radio(i)),
+        TrackChange::Moved => id.filter(|i| !queue::is_radio(&i.id)),
     }
 }
 
@@ -132,15 +135,19 @@ impl Session {
 
     /// The player's song changed to `id`. Records the song left in the history when the taste model is
     /// on, and returns what to scrobble.
-    pub fn scrobble_track(&self, id: Option<String>, why: TrackChange, playing: bool, now_ms: i64, wall_ms: i64, tz_offset_ms: i32) -> ScrobbleSend {
+    pub fn scrobble_track(&self, id: Option<ItemKey>, why: TrackChange, playing: bool, now_ms: i64, wall_ms: i64, tz_offset_ms: i32) -> ScrobbleSend {
         let taste_model = self.settings.in_effect(|p| p.taste_model);
         let next = followed(id, why);
-        let song = next.as_deref().and_then(|id| self.song(id));
+        let song = next.as_ref().and_then(|id| self.song(id));
         let open = self.db.weak();
+        let song = song.map(|s| {
+            let rows = self.db.rows_weak(&s.source);
+            (s, rows)
+        });
         let done = self.scrobbler.lock().switch(song, open.clone(), playing, now_ms, wall_ms);
         // The profile the song started in, not one opened since or while the write waits.
         if taste_model {
-            if let Some((c, db)) = done.as_ref().and_then(|c| Some((c, c.profile.upgrade()?))) {
+            if let Some((c, db)) = done.as_ref().and_then(|c| Some((c, c.rows.upgrade()?))) {
                 let (song, at, heard) = (c.song.clone(), c.started_at, c.heard_ms);
                 self.settings.writer.run(move || {
                     let _ = nori_library::history::record(&mut db.lock(), &song, at, heard, tz_offset_ms, db::now_ms());
@@ -148,7 +155,7 @@ impl Session {
             }
         }
         let counted = done.filter(|c| Weak::ptr_eq(&c.profile, &open) && c.heard_ms >= needed_ms(c.song.duration as i64));
-        let playing = next.as_deref().and_then(|id| self.song(id));
+        let playing = next.as_ref().and_then(|id| self.song(id));
         if let Some(to) = self.scrobbles.lock().clone() {
             if let Some(c) = &counted {
                 to.scrobble(&c.song, c.started_at);
@@ -173,7 +180,7 @@ mod tests {
         assert_eq!(needed_ms(10), 10_000);
 
         // Followed ids.
-        let id = |s: &str| Some(s.to_string());
+        let id = |s: &str| Some(ItemKey::own(s));
         assert_eq!(followed(id("s1"), TrackChange::Moved), id("s1"));
         assert_eq!(followed(id("radio:4"), TrackChange::Moved), None);
         assert_eq!(followed(id("radio:4"), TrackChange::Looped), id("radio:4"));
@@ -182,7 +189,7 @@ mod tests {
         // Heard time sums play edges only.
         let mut s = Scrobbler::default();
         let song = Song::only_id("a".into());
-        s.switch(Some(song.clone()), Weak::new(), true, 1_000, 50);
+        s.switch(Some((song.clone(), Weak::new())), Weak::new(), true, 1_000, 50);
         s.edge(true, 2_000);
         s.edge(false, 5_000);
         s.edge(false, 9_000);
@@ -211,11 +218,11 @@ mod tests {
         session.register(vec![song("a"), song("b"), song("c")]);
         let told = Arc::new(Told::default());
         session.scrobble_to(Some(told.clone()));
-        session.scrobble_track(Some("a".into()), TrackChange::Moved, true, 0, 1_000, 0);
+        session.scrobble_track(Some(ItemKey::own("a")), TrackChange::Moved, true, 0, 1_000, 0);
         // Heard 20 s of 100: not half.
-        session.scrobble_track(Some("b".into()), TrackChange::Moved, true, 20_000, 21_000, 0);
+        session.scrobble_track(Some(ItemKey::own("b")), TrackChange::Moved, true, 20_000, 21_000, 0);
         // Heard 60 s: counts, with its start.
-        let sent = session.scrobble_track(Some("c".into()), TrackChange::Moved, true, 80_000, 81_000, 0);
+        let sent = session.scrobble_track(Some(ItemKey::own("c")), TrackChange::Moved, true, 80_000, 81_000, 0);
         assert_eq!((sent.counted.map(|s| s.id), sent.counted_at, sent.playing.map(|s| s.id)), (Some("b".into()), 21_000, Some("c".into())));
         assert_eq!(*told.0.lock(), ["now a", "now b", "play b 21000", "now c"]);
         session.scrobble_to(None);

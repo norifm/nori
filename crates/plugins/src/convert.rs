@@ -135,7 +135,7 @@ pub fn album_out(a: &Album) -> t::Album {
 }
 
 pub fn artist_in(a: t::Artist) -> Artist {
-    Artist { id: a.id, name: a.name, cover_art: a.cover, artist_image_url: a.image_url, album_count: a.album_count, starred: a.starred, is_external: a.external }
+    Artist { id: a.id, name: a.name, cover_art: a.cover, artist_image_url: a.image_url, album_count: a.album_count, starred: a.starred, is_external: a.external, source: None, source_marked: false }
 }
 
 pub fn artist_out(a: &Artist) -> t::Artist {
@@ -143,7 +143,7 @@ pub fn artist_out(a: &Artist) -> t::Artist {
 }
 
 pub fn playlist_in(p: t::Playlist) -> Playlist {
-    Playlist { id: p.id, name: p.name, comment: p.comment, owner: p.owner, public: true, song_count: p.song_count, duration: p.duration, cover_art: p.cover }
+    Playlist { id: p.id, name: p.name, comment: p.comment, owner: p.owner, public: true, song_count: p.song_count, duration: p.duration, cover_art: p.cover, source: None, mixed: false, source_marked: false }
 }
 
 pub fn playlist_out(p: &Playlist) -> t::Playlist {

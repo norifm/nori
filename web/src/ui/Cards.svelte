@@ -3,7 +3,7 @@
   // sideways (`Shelf`). An album's line is the core's (`subtitle`: its artist and year). A card opened is
   // kept for its page's head (`known`).
   import { know } from "../state/known";
-  import { href } from "../state/route.svelte";
+  import { itemHref } from "../state/route.svelte";
   import { W } from "../words";
   import type { Album, Artist, Playlist } from "../state/types";
   import Card from "./Card.svelte";
@@ -12,6 +12,7 @@
   import { come, settle } from "./motion";
 
   let { albums = [], artists = [], playlists = [], row = false, sub }: { albums?: Album[]; artists?: Artist[]; playlists?: Playlist[]; row?: boolean; sub?: (a: Album) => string } = $props();
+  const key = (id: string, source?: string | null) => (source ? `${id}\x1f${source}` : id);
 </script>
 
 {#if albums.length === 0 && artists.length === 0 && playlists.length === 0}
@@ -23,15 +24,15 @@
 {/if}
 
 {#snippet cells()}
-  {#each artists as a (a.id)}
+  {#each artists as a (key(a.id, a.source))}
     <!-- How many albums: two artists of one name are told apart. -->
-    <div class="cell" animate:settle transition:come><Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" remote={a.isExternal} onopen={() => know("artist", a)} /></div>
+    <div class="cell" animate:settle transition:come><Card href={itemHref("artist", a.id, a.source)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" remote={a.isExternal} onopen={() => know("artist", a)} /></div>
   {/each}
-  {#each albums as a (a.id)}
-    <div class="cell" animate:settle transition:come><Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} remote={a.isExternal} onopen={() => know("album", a)} /></div>
+  {#each albums as a (key(a.id, a.source))}
+    <div class="cell" animate:settle transition:come><Card href={itemHref("album", a.id, a.source)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} remote={a.isExternal} onopen={() => know("album", a)} /></div>
   {/each}
-  {#each playlists as p (p.id)}
-    <div class="cell" animate:settle transition:come><Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} remote={p.remote} onopen={() => know("playlist", p)} /></div>
+  {#each playlists as p (key(p.id, p.source))}
+    <div class="cell" animate:settle transition:come><Card href={itemHref("playlist", p.id, p.source, !!p.mixed)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} remote={p.remote} onopen={() => know("playlist", p)} /></div>
   {/each}
 {/snippet}
 

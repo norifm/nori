@@ -140,7 +140,7 @@ mod tests {
     use crate::client::{NetResult, Write};
     use crate::providers::{Answer, Provider, ProviderInfo, SignIn};
     use crate::settings::{SavedServer, ServerKind};
-    use crate::stream::{StreamQuality, StreamTarget};
+    use crate::stream::{Stream, StreamQuality};
     use crate::transport::Transport;
     use crate::{browse::ProfileRules, Core};
     use parking_lot::Mutex;
@@ -180,8 +180,8 @@ mod tests {
         async fn write(&self, _: &Client, _: Write) -> NetResult<()> {
             Ok(())
         }
-        fn stream(&self, _: &Client, id: String, _: StreamQuality) -> StreamTarget {
-            StreamTarget { url: id.clone(), key: id }
+        fn stream(&self, _: &Client, id: String, _: StreamQuality) -> Stream {
+            Stream { url: id, quality: String::new() }
         }
         fn cover_address(&self, _: &Core, cover: &str, _: u32) -> String {
             cover.into()

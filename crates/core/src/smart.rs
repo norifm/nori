@@ -52,12 +52,13 @@ impl Core {
         Ok(run(&self.db.lock(), &def, &downloaded, offset as usize, limit as usize, false, db::now_ms())?.0)
     }
 
-    /// The finished download ids, read only when a rule asks about downloads.
+    /// The finished downloads of the profile's own source (the rows smart playlists read), read only when
+    /// a rule asks about downloads.
     fn downloaded_for(&self, def: &Def) -> Result<Vec<String>> {
         if !def.root.asks(IsDownloaded) {
             return Ok(Vec::new());
         }
-        self.download_ids(true)
+        Ok(self.download_ids(true)?.iter().filter_map(crate::ItemKey::own_id).map(str::to_string).collect())
     }
 }
 
@@ -74,6 +75,7 @@ impl Core {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ItemKey;
     use crate::history::tests::{listen, skip, song, DAY, NOW};
     use crate::CoreError;
     use serde_json::{json, Value};
@@ -130,7 +132,7 @@ pub(crate) mod tests {
         listen(&core, &songs[4], NOW - 200 * DAY);
         skip(&core, &songs[5], NOW - DAY);
         skip(&core, &songs[5], NOW - 2 * DAY);
-        core.mix_excluded_set("pigs".into(), true).unwrap();
+        core.mix_excluded_set(crate::ItemKey::own("pigs"), true).unwrap();
         core
     }
 
@@ -498,7 +500,7 @@ pub(crate) mod tests {
         // Through the core only finished downloads count.
         let songs: Vec<Song> = ["joga", "so"].map(|id| Song { id: id.into(), ..Default::default() }).to_vec();
         core.download_queue(songs).unwrap();
-        core.download_done("joga".into()).unwrap();
+        core.download_done(ItemKey::own("joga")).unwrap();
         assert_eq!(ids(&core.smart_evaluate(flag("isDownloaded", "isTrue"), 0, 50).unwrap()), ["joga"]);
         assert_eq!(core.smart_count(flag("isDownloaded", "isFalse")).unwrap(), 6);
 

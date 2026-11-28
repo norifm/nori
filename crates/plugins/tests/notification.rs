@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use nori_model::deciders::{NoriButton, SessionButtons};
-use nori_model::Song;
+use nori_model::{ItemKey, Song};
 use nori_plugins::testing::FIXTURE;
 use nori_plugins::{ButtonPress, Glyph, NotificationButton, Plugins, Repeat};
 
@@ -24,12 +24,13 @@ fn own(buttons: &[NoriButton]) -> Vec<NotificationButton> {
 }
 
 fn buttons(plugins: &Plugins, song: &str, nori: SessionButtons) -> Vec<NotificationButton> {
-    nori_tasks::block_on(plugins.notification_buttons(Some(song.into()), nori, Repeat::Off, "en".into()))
+    nori_tasks::block_on(plugins.notification_buttons(Some(ItemKey::own(song)), nori, Repeat::Off, "en".into()))
 }
 
 /// The songs by id, each titled as its id says what the fixture does with it.
 fn titled(plugins: &Plugins) {
-    plugins.set_songs(Arc::new(|id: &str| {
+    plugins.set_songs(Arc::new(|key: &ItemKey| {
+        let id = key.id.as_str();
         let title = match id {
             "marked" => "fixture buttons",
             "bad" => "fixture bad buttons",

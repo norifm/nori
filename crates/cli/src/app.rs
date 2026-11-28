@@ -26,6 +26,7 @@ use nori_core::settings::{EqLevel, SavedServer, ServerKind, SoundBand, StoredPre
 use nori_core::settings_store::SoundTool;
 use nori_core::stars::StarMarks;
 use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, OriginKind, PageOrigin, Playlist, PlaylistDetail, Song};
+use nori_core::sources::PlaylistAt;
 use nori_engine::{Event, State};
 use nori_core::tuning::SoundPage;
 use nori_look::cover::CoverColours;
@@ -139,16 +140,16 @@ pub enum Cmd {
     CycleRepeat,
     Download(Vec<Song>),
     /// Keeps the song out of the mixes.
-    ExcludeFromMixes(String, bool),
+    ExcludeFromMixes(nori_core::ItemKey, bool),
     /// Sets the sleep timer.
     Sleep(nori_core::menus::SleepChoice),
-    /// Adds songs to the playlist `id`, or makes one called `name` of them.
-    AddToPlaylist { id: String, songs: Vec<String> },
-    NewPlaylist { name: String, songs: Vec<String> },
-    /// A change of playlist `id` (renamed, a song moved or taken out), and what is said once it is made.
-    EditPlaylist { id: String, write: nori_core::client::Write, said: String },
+    /// Adds songs to `playlist`, or makes one called `name` of them.
+    AddToPlaylist { playlist: nori_core::Playlist, songs: Vec<Song> },
+    NewPlaylist { name: String, songs: Vec<Song> },
+    /// A change of `playlist` (renamed, a song moved or taken out), and what is said once it is made.
+    EditPlaylist { playlist: nori_core::Playlist, change: nori_host::session::PlaylistChange, said: String },
     /// Reads which of these songs are downloaded.
-    ReadDownloads(Vec<String>),
+    ReadDownloads(Vec<nori_core::ItemKey>),
     /// Draws the mix again.
     RedrawMix(String),
     /// Keeps a mix as a playlist, its name made from `title` by the core.
@@ -163,8 +164,8 @@ pub enum Cmd {
     /// Plays the library shuffled: random albums whole, or every song.
     ShuffleLibrary { albums: bool },
     DownloadFetch(Fetch),
-    DownloadRemove(Vec<String>),
-    Star(Starrable, String, bool),
+    DownloadRemove(Vec<nori_core::ItemKey>),
+    Star(Starrable, nori_core::ItemKey, bool),
     /// Pins a playlist on this device, or lets it go.
     Pin(String, bool),
     Setting(String, String),
@@ -215,6 +216,8 @@ pub enum Cmd {
     RenameProfile(String, String),
     /// Saved profile `profile`'s scrobbling accounts changed, or one signed in to and added.
     Scrobbler { profile: String, change: ScrobblerChange },
+    /// Saved profile `profile`'s merged sources changed.
+    Source { profile: String, change: SourceChange },
     /// The account acts as its identity at this place from now on.
     ChooseIdentity(u32),
     /// Moves the music to this device, or here (None).
@@ -364,6 +367,14 @@ impl Cmd {
     }
 }
 
+/// A change to a saved profile's merged sources ([`Cmd::Source`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceChange {
+    Add(String),
+    Move { id: String, by: i32 },
+    Remove(String),
+}
+
 /// `SoundTool` as a comparable command.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SoundToolCmd {
@@ -463,11 +474,12 @@ impl<T> Load<T> {
 /// A page opened over the view.
 pub enum Page {
     /// `known`: what the entry that opened it knew, its head until it is read.
-    Album { id: String, known: Option<Box<nori_core::Album>>, detail: Load<Box<AlbumDetail>>, sel: Sel },
+    Album { id: String, source: Option<String>, known: Option<Box<nori_core::Album>>, detail: Load<Box<AlbumDetail>>, sel: Sel },
     DownloadedAlbum { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
     /// `about`: its about part once read, and whether its biography shows whole.
-    Artist { id: String, known: Option<Box<nori_core::Artist>>, detail: Load<Box<ArtistDetail>>, about: Option<Box<ArtistAbout>>, whole: bool, sel: Sel },
-    Playlist { id: String, known: Option<Box<nori_core::Playlist>>, detail: Load<Box<PlaylistDetail>>, sel: Sel, filter: Filter },
+    Artist { id: String, source: Option<String>, known: Option<Box<nori_core::Artist>>, detail: Load<Box<ArtistDetail>>, about: Option<Box<ArtistAbout>>, whole: bool, sel: Sel },
+    /// A playlist where it is kept; `editable` once its page says the profile may change it.
+    Playlist { id: String, at: PlaylistAt, known: Option<Box<nori_core::Playlist>>, detail: Load<Box<PlaylistDetail>>, editable: bool, sel: Sel, filter: Filter },
     /// One of the core's mixes, or the favorites.
     Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
     /// A genre's songs, by its name.
@@ -483,10 +495,10 @@ impl Page {
     /// What the page reads; None for one made of what is already here.
     pub fn req(&self) -> Option<Req> {
         Some(match self {
-            Page::Album { id, .. } => Req::Album(id.clone()),
+            Page::Album { id, source, .. } => Req::Album(id.clone(), source.clone()),
             Page::DownloadedAlbum { id, .. } => Req::DownloadedAlbum(id.clone()),
-            Page::Artist { id, .. } => Req::Artist(id.clone()),
-            Page::Playlist { id, .. } => Req::Playlist(id.clone()),
+            Page::Artist { id, source, .. } => Req::Artist(id.clone(), source.clone()),
+            Page::Playlist { id, at, .. } => Req::Playlist(id.clone(), at.clone()),
             Page::Mix { id, .. } => Req::Mix(id.clone()),
             Page::Genre { name, .. } => Req::Genre(name.clone()),
             Page::Decade { start, .. } => Req::Decade(*start),
@@ -936,6 +948,8 @@ pub struct Login {
     pub flow: AddFlow,
     /// Selection among the first screen's providers ([`App::provider_lines`]).
     pub choice: Sel,
+    /// When set, signing in adds the new profile as a source of this profile id.
+    pub source_for: Option<String>,
 }
 
 /// The first run's questions (the core's `setup_steps`), over the app once the install's first profile
@@ -1410,7 +1424,7 @@ pub enum Overlay {
     /// What the selection's menu offers, the song's less used actions `folded` under More until it opens.
     Menu { title: String, item: Box<Item>, lines: Vec<crate::menu::MenuLine>, folded: Vec<crate::menu::MenuLine>, sel: Sel },
     /// A new playlist's name, for `songs`.
-    NewPlaylist { text: String, songs: Vec<String> },
+    NewPlaylist { text: String, songs: Vec<Song> },
     /// The jam's invite: its link and QR code.
     Invite { link: String },
     /// The thanks for a seal paid while the Support page is open, of `season`; any key ends it.
@@ -1465,7 +1479,7 @@ pub enum Target {
     Device,
     Preset,
     /// The playlist these songs go to: one of `choices` by index, or a new one (empty).
-    Playlist { songs: Vec<String>, choices: Vec<nori_core::menus::PlaylistChoice> },
+    Playlist { songs: Vec<Song>, choices: Vec<nori_core::menus::PlaylistChoice> },
     /// A sound level the equalizer's tools set.
     Level(EqLevel),
     /// A row of plugin `plugin`, of `kind`.
@@ -1493,13 +1507,15 @@ pub enum Target {
     ProfileName(String),
     /// A line of saved profile `0`'s scrobbling accounts ([`crate::settings_view::SettingsView::scrobbling_menu`]).
     Scrobbling(String),
+    /// A line of saved profile `0`'s merged sources ([`crate::settings_view::SettingsView::sources_menu`]).
+    Sources(String),
     /// The kind of scrobbling account to add to saved profile `0`.
     ScrobblerKind(String),
     /// The next field of a scrobbling account being added to `profile`: `step` of
     /// [`nori_core::scrobblers::scrobbler_fields`].
     ScrobblerField { profile: String, form: Box<nori_core::scrobblers::ScrobblerForm>, step: usize },
-    /// Playlist `0`'s new name.
-    PlaylistName(String),
+    /// The playlist's new name.
+    PlaylistName(Playlist),
     /// Which of the account's identities it acts as, by its place among them.
     Identity,
     /// The amount typed for Other on the Support page.
@@ -1519,7 +1535,7 @@ impl Target {
             Target::Preset => value.parse().ok().map(|i| Cmd::Sound(SoundToolCmd::Preset(i))),
             Target::Playlist { choices, .. } => {
                 let c = choices.get(value.parse::<usize>().ok()?)?;
-                Some(Cmd::AddToPlaylist { id: c.playlist.id.clone(), songs: c.adds.clone() })
+                Some(Cmd::AddToPlaylist { playlist: c.playlist.clone(), songs: c.adds.clone() })
             }
             Target::Sleep(choices) => value.parse().ok().and_then(|i: usize| choices.get(i).copied()).map(Cmd::Sleep),
             Target::ProfileName(id) => Some(Cmd::RenameProfile(id, value)),
@@ -1533,6 +1549,17 @@ impl Target {
                 };
                 Some(Cmd::Scrobbler { profile, change })
             }
+            Target::Sources(profile) => {
+                let (what, id) = value.split_once(':')?;
+                let change = match what {
+                    "add" => SourceChange::Add(id.to_string()),
+                    "earlier" => SourceChange::Move { id: id.to_string(), by: -1 },
+                    "later" => SourceChange::Move { id: id.to_string(), by: 1 },
+                    "remove" => SourceChange::Remove(id.to_string()),
+                    _ => return None,
+                };
+                Some(Cmd::Source { profile, change })
+            }
             Target::ScrobblerField { profile, form, step } => {
                 use nori_core::scrobblers::{scrobbler_fields, scrobbler_form_with, scrobbler_sign_in, ScrobblerSignIn};
                 let field = scrobbler_fields(form.kind)[step].field;
@@ -1544,10 +1571,10 @@ impl Target {
                 Some(Cmd::Scrobbler { profile, change })
             }
             Target::ScrobblerKind(_) => None,
-            Target::PlaylistName(id) => {
+            Target::PlaylistName(playlist) => {
                 let name = value.trim().to_string();
                 let said = crate::text::playlist_renamed(&name);
-                (!name.is_empty()).then(|| Cmd::EditPlaylist { id: id.clone(), write: nori_core::client::Write::RenamePlaylist { id, name }, said })
+                (!name.is_empty()).then_some(Cmd::EditPlaylist { playlist, change: nori_host::session::PlaylistChange::Rename { name }, said })
             }
             Target::Identity => value.parse().ok().map(Cmd::ChooseIdentity),
             // The Support page keeps these itself.
@@ -1773,7 +1800,7 @@ pub struct App {
     /// The audible song (during a mix, the louder one).
     pub song: Option<Song>,
     /// Songs' download states as last read, by id.
-    pub downloaded: HashMap<String, SongDownload>,
+    pub downloaded: HashMap<nori_core::ItemKey, SongDownload>,
     /// This session's star marks, drawn over the records' flags.
     pub marks: StarMarks,
     pub devices: Devices,
@@ -1782,7 +1809,7 @@ pub struct App {
     /// What the open profile offers (a jam guest's: the host's library, its picks asked of the host).
     pub rules: ProfileRules,
     /// The songs left out of every mix.
-    pub excluded: std::collections::HashSet<String>,
+    pub excluded: std::collections::HashSet<nori_core::ItemKey>,
     /// The planned transition out of `song`.
     pub transition: Option<nori_core::automix::planner::TransitionNote>,
     /// The transition that brought `song` in, while still mixing.
@@ -2124,8 +2151,8 @@ impl App {
     pub(crate) fn open_page(&mut self, page: Page) {
         self.cmds.extend(page.req().map(Cmd::Load));
         // After the page: a provider answers both from one read of the artist.
-        if let Page::Artist { id, .. } = &page {
-            self.cmds.push(Cmd::Load(Req::ArtistAbout(id.clone())));
+        if let Page::Artist { id, source, .. } = &page {
+            self.cmds.push(Cmd::Load(Req::ArtistAbout(id.clone(), source.clone())));
         }
         self.pages.push(page);
         self.focus = Focus::Main;
@@ -2133,12 +2160,19 @@ impl App {
         self.dirty = true;
     }
 
-    pub fn open_album(&mut self, id: String) {
-        self.open_page(Page::Album { id, known: None, detail: Load::Loading, sel: Sel::default() });
+    /// Album `id` of `source` (None: the profile's own).
+    pub fn open_album(&mut self, id: String, source: Option<String>) {
+        self.open_page(Page::Album { id, source, known: None, detail: Load::Loading, sel: Sel::default() });
     }
 
-    pub fn open_artist(&mut self, id: String) {
-        self.open_page(Page::Artist { id, known: None, detail: Load::Loading, about: None, whole: false, sel: Sel::default() });
+    /// Artist `id` of `source` (None: the profile's own), as one artist across the profile's sources.
+    pub fn open_artist(&mut self, id: String, source: Option<String>) {
+        self.open_page(Page::Artist { id, source, known: None, detail: Load::Loading, about: None, whole: false, sel: Sel::default() });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_playlist(&mut self, p: &nori_core::Playlist) {
+        self.open_page(Page::Playlist { id: p.id.clone(), at: nori_core::sources::playlist_at(p), known: Some(Box::new(p.clone())), detail: Load::Loading, editable: false, sel: Sel::default(), filter: Filter::default() });
     }
 
     /// Opens the page of entry `item` (an album, artist or playlist), which shows what the entry knew until it
@@ -2146,9 +2180,9 @@ impl App {
     fn open_known(&mut self, item: Item) {
         let sel = Sel::default();
         match item {
-            Item::Album(a) => self.open_page(Page::Album { id: a.id.clone(), known: Some(Box::new(a)), detail: Load::Loading, sel }),
-            Item::Artist(a) => self.open_page(Page::Artist { id: a.id.clone(), known: Some(Box::new(a)), detail: Load::Loading, about: None, whole: false, sel }),
-            Item::Playlist(p) => self.open_page(Page::Playlist { id: p.id.clone(), known: Some(Box::new(p)), detail: Load::Loading, sel, filter: Filter::default() }),
+            Item::Album(a) => self.open_page(Page::Album { id: a.id.clone(), source: a.source.clone(), known: Some(Box::new(a)), detail: Load::Loading, sel }),
+            Item::Artist(a) => self.open_page(Page::Artist { id: a.id.clone(), source: a.source.clone(), known: Some(Box::new(a)), detail: Load::Loading, about: None, whole: false, sel }),
+            Item::Playlist(p) => self.open_page(Page::Playlist { id: p.id.clone(), at: nori_core::sources::playlist_at(&p), known: Some(Box::new(p)), detail: Load::Loading, editable: false, sel, filter: Filter::default() }),
             _ => {}
         }
     }
@@ -2233,7 +2267,7 @@ impl App {
     /// What the session's lyrics view shows now (`Handle::lyrics_heard`); another song's, still on its
     /// way, is let go.
     pub fn lyrics_now(&mut self, now: nori_core::lyrics_follow::LyricsNow) {
-        if now.song() != self.song.as_ref().map(|s| s.id.as_str()) {
+        if now.song() != self.song.as_ref().map(nori_core::Keyed::key).as_ref() {
             return;
         }
         self.lyrics = Words::of(now, self.now.position(Instant::now()));
@@ -2321,7 +2355,7 @@ impl App {
                 }
             }
             Msg::Offer(offer) => {
-                let (here, playing) = (self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
+                let (here, playing) = (self.song.as_ref().map(nori_core::Keyed::key), self.now.state == State::Playing);
                 self.home.offer.found(offer, here, playing);
             }
             Msg::LoggedIn(r) => {
@@ -2461,12 +2495,12 @@ impl App {
                     self.lyrics_wake = Some(Instant::now());
                 }
                 // Music started: Home lets the offer go.
-                let here = self.song.as_ref().map(|s| s.id.clone());
+                let here = self.song.as_ref().map(nori_core::Keyed::key);
                 self.home.offer.still(here, s == State::Playing);
             }
             Event::Song { .. } | Event::Looped { .. } => {}
             Event::Error { id, message } => {
-                let what = self.shared.song(&id).map_or_else(|| "The output".to_string(), |s| format!("“{}”", s.title));
+                let what = id.and_then(|id| self.shared.song(&id)).map_or_else(|| "The output".to_string(), |s| format!("“{}”", s.title));
                 self.say(format!("{what} would not play: {message}"), true);
             }
             Event::Buffering(on) => self.now.buffering = on,
@@ -2497,7 +2531,7 @@ impl App {
         let changed = self.song.as_ref().map(|s| &s.id) != song.as_ref().map(|s| &s.id);
         self.song = song;
         // The player came to show the song offered.
-        self.home.offer.still(self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
+        self.home.offer.still(self.song.as_ref().map(nori_core::Keyed::key), self.now.state == State::Playing);
         if !changed {
             return;
         }
@@ -2517,14 +2551,8 @@ impl App {
 
     fn data(&mut self, req: Req, r: Result<Data, String>) {
         match (req, r) {
-            (Req::Home, Ok(Data::HomeRow(i, row, title, items))) => {
-                // A feed has as many shelves as the service sends.
-                if i >= self.home.rows.len() {
-                    self.home.rows.resize(i + 1, None);
-                }
-                if let Some(slot) = self.home.rows.get_mut(i) {
-                    *slot = Some(Shelf { title, items, row });
-                }
+            (Req::Home, Ok(Data::HomeShelves(shelves))) => {
+                self.home.rows = shelves;
                 self.home.error = None;
                 self.home.settle(true);
             }
@@ -2584,7 +2612,9 @@ impl App {
             (Req::PlaylistChoices(asked), Ok(Data::PlaylistChoices(choices))) => match &mut self.overlay {
                 Some(Overlay::Picker { options, target: Target::Playlist { songs, choices: offered }, .. }) if *songs == asked => {
                     options.truncate(1);
-                    options.extend(choices.iter().enumerate().map(|(i, c)| (crate::text::playlist_choice(c, asked.len()), i.to_string())));
+                    let (prefs, kinds) = (&self.prefs, &self.settings.own.kinds);
+                    let named = |source: &Option<String>| crate::text::source_name(prefs, kinds, source);
+                    options.extend(choices.iter().enumerate().map(|(i, c)| (crate::text::playlist_choice(c, asked.len(), named), i.to_string())));
                     *offered = choices;
                 }
                 _ => {}
@@ -2674,11 +2704,11 @@ impl App {
                 }
             }
             // A page without its about part is still the page.
-            (Req::ArtistAbout(id), r) => {
+            (Req::ArtistAbout(id, source), r) => {
                 let Ok(Data::ArtistAbout(a)) = r else { return };
                 for page in self.pages.iter_mut() {
-                    if let Page::Artist { id: of, about, .. } = page {
-                        if *of == id {
+                    if let Page::Artist { id: of, source: of_source, about, .. } = page {
+                        if *of == id && *of_source == source {
                             *about = Some(a.clone());
                         }
                     }
@@ -2691,13 +2721,13 @@ impl App {
                     }
                     // What of its songs is downloaded, for its head's download entry.
                     if let Ok(Data::Album(d)) = &r {
-                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(nori_core::Keyed::key).collect()));
                     }
-                    if let Ok(Data::Playlist(d)) = &r {
-                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                    if let Ok(Data::Playlist(d, _)) = &r {
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(nori_core::Keyed::key).collect()));
                     }
                     if let Ok(Data::Mix(d)) = &r {
-                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(nori_core::Keyed::key).collect()));
                     }
                     match (page, r) {
                         (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Ok(Data::Album(d))) => *detail = Load::Ready(d),
@@ -2708,7 +2738,7 @@ impl App {
                             }
                             *detail = Load::Ready(d);
                         }
-                        (Page::Playlist { detail, .. }, Ok(Data::Playlist(d))) => *detail = Load::Ready(d),
+                        (Page::Playlist { detail, editable, .. }, Ok(Data::Playlist(d, may))) => (*detail, *editable) = (Load::Ready(d), may),
                         (Page::Mix { detail, .. }, Ok(Data::Mix(d))) => *detail = Load::Ready(d),
                         (Page::Mix { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Genre { songs, .. }, Ok(Data::Genre(v))) => *songs = Load::Ready(v),
@@ -3316,20 +3346,24 @@ impl App {
     /// A key on the first screen.
     fn provider_key(&mut self, k: KeyEvent) {
         let providers = self.provider_lines().len();
-        let profiles = self.prefs.servers.len();
+        let shown = nori_core::settings::servers_shown(self.prefs.servers.clone());
+        let profiles = shown.len();
         let l = &mut self.login;
         match k.code {
             KeyCode::Up | KeyCode::Char('k') if l.on_list => l.sel.by(-1, profiles),
             KeyCode::Down | KeyCode::Char('j') if l.on_list => l.sel.by(1, profiles),
             KeyCode::Up | KeyCode::Char('k') => l.choice.by(-1, providers),
             KeyCode::Down | KeyCode::Char('j') => l.choice.by(1, providers),
-            KeyCode::Tab if profiles > 0 => l.on_list = !l.on_list,
+            KeyCode::Tab if profiles > 0 && l.source_for.is_none() => l.on_list = !l.on_list,
             KeyCode::Esc if l.on_list => l.on_list = false,
-            KeyCode::Esc if profiles > 0 => self.view = View::Settings,
+            KeyCode::Esc if profiles > 0 || l.source_for.is_some() => {
+                l.source_for = None;
+                self.view = View::Settings;
+            }
             KeyCode::Esc | KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('p') => self.plugins_alone(Alone::Plugins),
             KeyCode::Enter if l.on_list => {
-                if let Some(s) = self.prefs.servers.get(l.sel.at) {
+                if let Some(s) = shown.get(l.sel.at) {
                     self.cmds.push(Cmd::SwitchServer(s.id.clone()));
                 }
             }
@@ -3566,6 +3600,13 @@ impl App {
                                 None
                             }
                             Target::Scrobbling(profile) if value == "add" => Some(crate::text::scrobbler_kinds(profile)),
+                            Target::Sources(profile) if value == "new" => {
+                                self.login.source_for = Some(profile);
+                                self.login.flow.on(AddEvent::Start);
+                                self.login.on_list = false;
+                                self.view = View::Login;
+                                None
+                            }
                             Target::ScrobblerKind(profile) => {
                                 let kind = nori_core::settings::ScrobblerKind::from_id(&value);
                                 kind.map(|kind| crate::text::scrobbler_field(profile, Box::new(nori_core::scrobblers::ScrobblerForm { kind, ..Default::default() }), 0))
@@ -3860,7 +3901,7 @@ impl App {
             Action::Favorites => self.favorites_toggle(),
             Action::Radio => {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.radio) {
-                    self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id.clone()), false));
+                    self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id.clone(), s.source.clone()), false));
                 }
             }
             Action::NextPane | Action::PreviousPane => self.cycle(a == Action::NextPane),
@@ -3949,7 +3990,7 @@ impl App {
             },
             Action::Remove if self.focus == Focus::Main && self.view == View::Downloads => {
                 if let Some(Item::Song(songs, i)) = self.selected() {
-                    let id = songs[i].id.clone();
+                    let id = nori_core::Keyed::key(&songs[i]);
                     self.ask_remove(vec![id]);
                 }
             }
@@ -3976,6 +4017,10 @@ impl App {
                 self.jam_with(item);
             }
             Action::Menu if self.on_settings() => match self.settings.plugin_menu().or_else(|| self.settings.scrobbling_menu()) {
+                Some(o) => self.overlay = Some(o),
+                None => self.dirty = false,
+            },
+            Action::Enqueue if self.on_settings() => match self.settings.sources_menu() {
                 Some(o) => self.overlay = Some(o),
                 None => self.dirty = false,
             },
@@ -4438,10 +4483,10 @@ impl App {
                 let next = a == Action::PlayNext;
                 match item {
                     Item::Song(songs, i) => self.cmds.push(Cmd::Enqueue(vec![songs[i].clone()], next)),
-                    Item::Album(al) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Album(al.id), next)),
+                    Item::Album(al) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Album(al.id, al.source), next)),
                     Item::DownloadedAlbum(a) => self.cmds.push(Cmd::EnqueueFetch(Fetch::DownloadedAlbum(a.id), next)),
-                    Item::Artist(ar) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Artist(ar.id), next)),
-                    Item::Playlist(p) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Playlist(p.id), next)),
+                    Item::Artist(ar) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Artist(ar.id, ar.source), next)),
+                    Item::Playlist(p) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Playlist(p.id.clone(), nori_core::sources::playlist_at(&p)), next)),
                     Item::Mix(m) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Mix(m.id), next)),
                     Item::Genre(g) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Genre(g.name), next)),
                 }
@@ -4451,19 +4496,19 @@ impl App {
             (Action::Download, _) if !self.rules.downloads => self.dirty = false,
             (Action::Download, item) => match item {
                 Item::Song(songs, i) => self.cmds.push(Cmd::Download(vec![songs[i].clone()])),
-                Item::Album(al) => self.cmds.push(Cmd::DownloadFetch(Fetch::Album(al.id))),
+                Item::Album(al) => self.cmds.push(Cmd::DownloadFetch(Fetch::Album(al.id, al.source))),
                 Item::DownloadedAlbum(_) => {},
-                Item::Artist(ar) => self.cmds.push(Cmd::DownloadFetch(Fetch::Artist(ar.id))),
-                Item::Playlist(p) => self.cmds.push(Cmd::DownloadFetch(Fetch::Playlist(p.id))),
+                Item::Artist(ar) => self.cmds.push(Cmd::DownloadFetch(Fetch::Artist(ar.id, ar.source))),
+                Item::Playlist(p) => self.cmds.push(Cmd::DownloadFetch(Fetch::Playlist(p.id.clone(), nori_core::sources::playlist_at(&p)))),
                 Item::Mix(m) => self.cmds.push(Cmd::DownloadFetch(Fetch::Mix(m.id))),
                 Item::Genre(g) => self.cmds.push(Cmd::DownloadFetch(Fetch::Genre(g.name))),
             },
             (Action::Star, item) => {
                 let (kind, id, listed) = match item {
-                    Item::Song(songs, i) => (Starrable::Song, songs[i].id.clone(), songs[i].starred),
-                    Item::Album(al) => (Starrable::Album, al.id, al.starred),
-                    Item::DownloadedAlbum(a) => (Starrable::Album, a.id, a.starred),
-                    Item::Artist(ar) => (Starrable::Artist, ar.id, ar.starred),
+                    Item::Song(songs, i) => (Starrable::Song, nori_core::Keyed::key(&songs[i]), songs[i].starred),
+                    Item::Album(al) => (Starrable::Album, nori_core::Keyed::key(&al), al.starred),
+                    Item::DownloadedAlbum(a) => (Starrable::Album, nori_core::Keyed::key(&a), a.starred),
+                    Item::Artist(ar) => (Starrable::Artist, nori_core::Keyed::key(&ar), ar.starred),
                     Item::Playlist(_) | Item::Mix(_) | Item::Genre(_) => return,
                 };
                 self.star(kind, id, listed);
@@ -4642,13 +4687,13 @@ impl App {
 
     /// Flips a song's seal.
     pub(crate) fn star_song(&mut self, s: Song) {
-        self.star(Starrable::Song, s.id, s.starred);
+        self.star(Starrable::Song, nori_core::Keyed::key(&s), s.starred);
     }
 
     fn play_all(&mut self, shuffle: bool) {
         if self.focus == Focus::Main && self.page().is_some() {
             match self.page() {
-                Some(Page::Artist { id, .. }) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(id.clone()), shuffle)),
+                Some(Page::Artist { id, source, .. }) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(id.clone(), source.clone()), shuffle)),
                 Some(p) => {
                     if let Some(songs) = p.songs() {
                         let from = self.origin_here();
@@ -4664,10 +4709,10 @@ impl App {
             self.search_result_used();
         }
         match item {
-            Some(Item::Album(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Album(a.id), shuffle)),
+            Some(Item::Album(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Album(a.id, a.source), shuffle)),
             Some(Item::DownloadedAlbum(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), shuffle)),
-            Some(Item::Artist(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(a.id), shuffle)),
-            Some(Item::Playlist(p)) => self.cmds.push(Cmd::PlayFetch(Fetch::Playlist(p.id), shuffle)),
+            Some(Item::Artist(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(a.id, a.source), shuffle)),
+            Some(Item::Playlist(p)) => self.cmds.push(Cmd::PlayFetch(Fetch::Playlist(p.id.clone(), nori_core::sources::playlist_at(&p)), shuffle)),
             Some(Item::Mix(m)) => self.cmds.push(Cmd::PlayFetch(Fetch::Mix(m.id), shuffle)),
             Some(Item::Genre(g)) => self.cmds.push(Cmd::PlayFetch(Fetch::Genre(g.name), shuffle)),
             Some(Item::Song(songs, _)) => {
@@ -4680,27 +4725,25 @@ impl App {
 
     /// Flips an item's heart (`listed`: its record's flag), marked at once; the core's marks follow
     /// ([`Msg::Starred`]).
-    fn star(&mut self, kind: Starrable, id: String, listed: bool) {
-        let on = !self.starred(kind, &id, listed);
+    fn star(&mut self, kind: Starrable, key: nori_core::ItemKey, listed: bool) {
+        let on = !self.starred(kind, &key, listed);
         // A like is stamped on the playing song's seal.
-        if on && self.song.as_ref().is_some_and(|s| s.id == id) {
+        if on && kind == Starrable::Song && self.song.as_ref().is_some_and(|s| nori_core::Keyed::is(s, &key)) {
             self.pressed(Button::StarSong);
         }
-        match self.devices.hearts.get_mut(&id).filter(|_| kind == Starrable::Song) {
+        match key.own_id().and_then(|id| self.devices.hearts.get_mut(id)).filter(|_| kind == Starrable::Song) {
             Some(heart) => *heart = on,
-            None => {
-                self.marks.mark(kind, id.clone(), on);
-            }
+            None => self.marks.mark(kind, key.clone(), on),
         }
-        self.cmds.push(Cmd::Star(kind, id, on));
+        self.cmds.push(Cmd::Star(kind, key, on));
     }
 
-    /// Whether an item shows starred (`listed`: its record's flag): a song in the queue of another
-    /// device playing as that device shows it, else as this session marked it.
-    pub fn starred(&self, kind: Starrable, id: &str, listed: bool) -> bool {
-        match self.devices.hearts.get(id).filter(|_| kind == Starrable::Song) {
+    /// Whether item `key` shows starred (`listed`: its record's flag): a song in the queue of another
+    /// device playing as that device shows it, else as this session marked it in its source.
+    pub fn starred(&self, kind: Starrable, key: &nori_core::ItemKey, listed: bool) -> bool {
+        match key.own_id().and_then(|id| self.devices.hearts.get(id)).filter(|_| kind == Starrable::Song) {
             Some(on) => *on,
-            None => self.marks.starred(kind, id, listed),
+            None => self.marks.starred(kind, key, listed),
         }
     }
 
@@ -4726,7 +4769,7 @@ impl App {
     /// How many of the page's songs are not downloaded.
     pub fn page_missing(&self) -> usize {
         let songs = self.page().and_then(Page::songs).unwrap_or_default();
-        songs.iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).count()
+        songs.iter().filter(|s| self.downloaded.get(&nori_core::Keyed::key(*s)) != Some(&SongDownload::Done)).count()
     }
 
     /// Does one of the page's actions.
@@ -4734,10 +4777,10 @@ impl App {
         let Some(page) = self.page() else { return };
         let songs = page.songs().map(<[Song]>::to_vec).unwrap_or_default();
         let fetch = match page {
-            Page::Album { id, .. } => Some(Fetch::Album(id.clone())),
+            Page::Album { id, source, .. } => Some(Fetch::Album(id.clone(), source.clone())),
             Page::DownloadedAlbum { id, .. } => Some(Fetch::DownloadedAlbum(id.clone())),
-            Page::Artist { id, .. } => Some(Fetch::Artist(id.clone())),
-            Page::Playlist { id, .. } => Some(Fetch::Playlist(id.clone())),
+            Page::Artist { id, source, .. } => Some(Fetch::Artist(id.clone(), source.clone())),
+            Page::Playlist { id, at, .. } => Some(Fetch::Playlist(id.clone(), at.clone())),
             Page::Mix { id, .. } => Some(Fetch::Mix(id.clone())),
             Page::Genre { name, .. } => Some(Fetch::Genre(name.clone())),
             Page::Decade { start, .. } => Some(Fetch::Decade(*start)),
@@ -4745,12 +4788,12 @@ impl App {
         };
         match a {
             PageAction::Download { act: DownloadAct::Remove } => {
-                self.ask_remove(songs.iter().map(|s| s.id.clone()).collect());
+                self.ask_remove(songs.iter().map(nori_core::Keyed::key).collect());
             }
             // A playlist is downloaded whole, so it is kept downloaded as it changes.
-            PageAction::Download { act: DownloadAct::Missing } if matches!(fetch, Some(Fetch::Playlist(_))) => self.cmds.extend(fetch.map(Cmd::DownloadFetch)),
+            PageAction::Download { act: DownloadAct::Missing } if matches!(fetch, Some(Fetch::Playlist(_, PlaylistAt::Source { source: None }))) => self.cmds.extend(fetch.map(Cmd::DownloadFetch)),
             PageAction::Download { act: DownloadAct::Missing } => {
-                let missing: Vec<Song> = songs.into_iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).collect();
+                let missing: Vec<Song> = songs.into_iter().filter(|s| self.downloaded.get(&nori_core::Keyed::key(s)) != Some(&SongDownload::Done)).collect();
                 self.cmds.push(Cmd::Download(missing));
             }
             PageAction::Download { act: DownloadAct::All } | PageAction::DownloadEverything => self.cmds.extend(fetch.map(Cmd::DownloadFetch)),
@@ -4774,15 +4817,15 @@ impl App {
     }
 
     /// Takes the download state of songs, as their page and menu show it.
-    pub fn knows_downloads(&mut self, ids: Vec<String>, states: Vec<SongDownload>) {
+    pub fn knows_downloads(&mut self, ids: Vec<nori_core::ItemKey>, states: Vec<SongDownload>) {
         self.downloaded.extend(ids.into_iter().zip(states));
     }
 
     /// Flips the seal on the page's album or artist, or pins its playlist.
     fn star_page(&mut self) {
         let (kind, id, listed) = match self.page() {
-            Some(Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. }) => (Starrable::Album, d.album.id.clone(), d.album.starred),
-            Some(Page::Artist { detail: Load::Ready(d), .. }) => (Starrable::Artist, d.artist.id.clone(), d.artist.starred),
+            Some(Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. }) => (Starrable::Album, nori_core::Keyed::key(&d.album), d.album.starred),
+            Some(Page::Artist { detail: Load::Ready(d), .. }) => (Starrable::Artist, nori_core::Keyed::key(&d.artist), d.artist.starred),
             Some(Page::Playlist { detail: Load::Ready(d), .. }) => {
                 let id = d.playlist.id.clone();
                 let on = !self.prefs.pinned_playlists.contains(&id);
@@ -4823,7 +4866,7 @@ impl App {
 
     /// The queue's songs in play order go into a playlist picked next, where the queue offers it.
     fn keep_queue(&mut self) {
-        let songs: Vec<String> = self.queue.as_ref().map(|q| q.order.iter().filter_map(|&i| Some(q.songs.get(i as usize)?.id.clone())).collect()).unwrap_or_default();
+        let songs: Vec<Song> = self.queue.as_ref().map(|q| q.order.iter().filter_map(|&i| q.songs.get(i as usize).cloned()).collect()).unwrap_or_default();
         if self.queue_offers().contains(&nori_core::menus::QueueAction::AddToPlaylist) {
             self.pick_playlist(songs);
         } else {
@@ -5036,10 +5079,10 @@ impl App {
     pub(crate) fn jam_with(&mut self, item: Option<Item>) {
         let play = match item {
             Some(Item::Song(songs, i)) => Some(Cmd::Play { songs, start: i, shuffle: false, from: self.origin_here() }),
-            Some(Item::Album(a)) => Some(Cmd::PlayFetch(Fetch::Album(a.id), false)),
+            Some(Item::Album(a)) => Some(Cmd::PlayFetch(Fetch::Album(a.id, a.source), false)),
             Some(Item::DownloadedAlbum(a)) => Some(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), false)),
-            Some(Item::Artist(a)) => Some(Cmd::PlayFetch(Fetch::Artist(a.id), false)),
-            Some(Item::Playlist(p)) => Some(Cmd::PlayFetch(Fetch::Playlist(p.id), false)),
+            Some(Item::Artist(a)) => Some(Cmd::PlayFetch(Fetch::Artist(a.id, a.source), false)),
+            Some(Item::Playlist(p)) => Some(Cmd::PlayFetch(Fetch::Playlist(p.id.clone(), nori_core::sources::playlist_at(&p)), false)),
             Some(Item::Mix(m)) => Some(Cmd::PlayFetch(Fetch::Mix(m.id), false)),
             Some(Item::Genre(g)) => Some(Cmd::PlayFetch(Fetch::Genre(g.name), false)),
             None => None,
@@ -5397,7 +5440,7 @@ impl App {
             }
             Button::StarSong => {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.stars) {
-                    let (id, listed) = (s.id.clone(), s.starred);
+                    let (id, listed) = (nori_core::Keyed::key(s), s.starred);
                     self.star(Starrable::Song, id, listed);
                 }
             }

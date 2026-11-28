@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.update
  * was made on: back lets go of it before it leaves the page, and any change of page ends it, so the bar
  * never stays up over a page where nothing is picked. Plain state, tested on the JVM (SelectionTest).
  */
-class Selection<T>(private val id: (T) -> String) {
+class Selection<T>(private val id: (T) -> Any) {
     private val _items = MutableStateFlow<List<T>>(emptyList())
     val items: StateFlow<List<T>> = _items
     private var page: String? = null

@@ -13,6 +13,7 @@ use nori_core::transport::NetError;
 use nori_core::{AlbumDetail, ArtistDetail, PlaylistDetail, Song};
 use nori_covers::memory::Image;
 pub use nori_host::desktop::Root;
+use nori_core::home::HomePlace;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot, ShelfItems};
 pub use nori_host::pages::ALBUM_PAGE;
 pub use nori_host::session::{Audio, Chore};
@@ -207,12 +208,14 @@ pub enum Req {
     Decade(u32),
     /// What the downloads weigh.
     DownloadsSize,
-    Album(String),
+    /// An album or artist by id, in its source (None: the profile's own).
+    Album(String, Option<String>),
     DownloadedAlbum(String),
-    Artist(String),
+    Artist(String, Option<String>),
     /// An artist page's about part, read after its page.
-    ArtistAbout(String),
-    Playlist(String),
+    ArtistAbout(String, Option<String>),
+    /// A playlist by id, where it is kept.
+    Playlist(String, nori_core::sources::PlaylistAt),
     Mix(String),
     /// A Home row in full, a page from `offset`.
     Row { row: nori_core::settings::HomeRow, offset: u32 },
@@ -224,13 +227,12 @@ pub enum Req {
     Work,
     Facts,
     /// The playlists these songs may go into (the core's `playlist_choices`).
-    PlaylistChoices(Vec<String>),
+    PlaylistChoices(Vec<Song>),
 }
 
 pub enum Data {
-    /// Home shelf: index (into the session's Home rows, or the service's feed), the library's row it is,
-    /// title, entries.
-    HomeRow(usize, Option<nori_core::settings::HomeRow>, String, Vec<crate::app::Item>),
+    /// Home's shelves in the order they show; None for one not read yet.
+    HomeShelves(Vec<Option<crate::app::Shelf>>),
     /// For you's tiles.
     Mixes(Vec<nori_core::mixes::board::MixTile>),
     /// A page of a Home row in full, and whether it was the last.
@@ -253,7 +255,8 @@ pub enum Data {
     Album(Box<AlbumDetail>),
     Artist(Box<ArtistDetail>),
     ArtistAbout(Box<nori_core::pages::ArtistAbout>),
-    Playlist(Box<PlaylistDetail>),
+    /// A playlist's page, and whether the profile may change it.
+    Playlist(Box<PlaylistDetail>, bool),
     Downloads(Box<Downloads>),
     DownloadProgress(Box<nori_core::transfers::DownloadSections>),
     /// None once the downloads are done.
@@ -354,11 +357,11 @@ impl Session {
             Req::Albums { sort, favorites, offset } => Some(PageAsk::Albums { sort, offset, favorites }),
             Req::Artists => Some(PageAsk::Artists),
             Req::Playlists => Some(PageAsk::Playlists),
-            Req::Album(id) => Some(PageAsk::Album(id)),
+            Req::Album(id, source) => Some(PageAsk::Album(id, source)),
             Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
-            Req::Artist(id) => Some(PageAsk::Artist(id)),
-            Req::ArtistAbout(id) => Some(PageAsk::ArtistAbout(id)),
-            Req::Playlist(id) => Some(PageAsk::Playlist(id)),
+            Req::Artist(id, source) => Some(PageAsk::Artist(id, source)),
+            Req::ArtistAbout(id, source) => Some(PageAsk::ArtistAbout(id, source)),
+            Req::Playlist(id, at) => Some(PageAsk::Playlist(id, at)),
             Req::Mix(id) => Some(PageAsk::Mix(id)),
             Req::Favorites => Some(PageAsk::Favorites),
             // The index's songs in the order asked for (the server's own for a profile that keeps none).
@@ -372,7 +375,13 @@ impl Session {
             Req::Row { .. } | Req::Home | Req::Browse | Req::DownloadsSize | Req::DownloadProgress | Req::Work | Req::Facts | Req::PlaylistChoices(_) => None,
         };
         if let Some(ask) = ask {
-            return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
+            let (client, prefs) = (self.client.clone(), self.core.session.settings.current().unwrap_or_default());
+            // Whether the profile may change a playlist, as that playlist's source's account.
+            let editable = move |p: &nori_core::Playlist| {
+                let user = nori_core::settings::source_profile(prefs.servers.clone(), prefs.active_server_id.clone(), p.source.clone()).map(|s| s.user).unwrap_or_default();
+                client.playlist_editable_in(p, &user)
+            };
+            return self.host.read_page(ask, move |r| send(r.map(|got| data_of(got, &editable)).map_err(|e| page_failed(&e))));
         }
         match req {
             Req::Row { row, offset } => {
@@ -391,29 +400,36 @@ impl Session {
             }
             Req::Home => {
                 let rows = self.host.home_rows();
-                self.host.read_home(rows.clone(), true, move |r| match r {
-                    // A source's own Home: its feed, each shelf's songs first (a song plays the shelf's songs
-                    // from it), then its albums, playlists and artists, as the desktop's.
-                    Ok(HomePart::Feed(feed)) => {
-                        let shown = feed.into_iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty()));
-                        for (i, f) in shown.enumerate() {
-                            use crate::app::Item;
-                            let songs = (0..f.songs.len()).map(|n| Item::Song(f.songs.clone(), n));
-                            let rest = f.albums.into_iter().map(Item::Album).chain(f.playlists.into_iter().map(Item::Playlist)).chain(f.artists.into_iter().map(Item::Artist));
-                            send(Ok(Data::HomeRow(i, None, f.title, songs.chain(rest).collect())));
+                // The library's shelves and the sources' own (their feeds), drawn in the order woven
+                // (`HomePart::Places`): a feed shelf's songs first (a song plays the shelf's songs from it),
+                // then its albums, playlists and artists, as the desktop's.
+                let home = std::sync::Mutex::new((vec![None; rows.len()], Vec::new(), Vec::new()));
+                self.host.read_home(rows.clone(), true, move |r| {
+                    use crate::app::Item;
+                    let mut home = home.lock().unwrap_or_else(|e| e.into_inner());
+                    let (shelves, feed, places) = &mut *home;
+                    match r {
+                        Ok(HomePart::Feed(v)) => *feed = v,
+                        Ok(HomePart::Shelf { at, items }) => {
+                            shelves[at] = Some(match items {
+                                ShelfItems::Albums { v } => v.into_iter().map(Item::Album).collect(),
+                                ShelfItems::Playlists { v } => v.into_iter().map(Item::Playlist).collect(),
+                                ShelfItems::Songs { v } => (0..v.len()).map(|n| Item::Song(v.clone(), n)).collect::<Vec<_>>(),
+                            })
                         }
+                        Ok(HomePart::Places(v)) => *places = v,
+                        Ok(HomePart::Mixes(tiles)) => return send(Ok(Data::Mixes(tiles))),
+                        Err(e) => return send(Err(unreachable(&e))),
                     }
-                    Ok(HomePart::Shelf { at, items }) => {
-                        use crate::app::Item;
-                        let items = match items {
-                            ShelfItems::Albums { v } => v.into_iter().map(Item::Album).collect(),
-                            ShelfItems::Playlists { v } => v.into_iter().map(Item::Playlist).collect(),
-                            ShelfItems::Songs { v } => (0..v.len()).map(|n| Item::Song(v.clone(), n)).collect(),
-                        };
-                        send(Ok(Data::HomeRow(at, Some(rows[at]), crate::text::home_row(rows[at]).into(), items)))
-                    }
-                    Ok(HomePart::Mixes(tiles)) => send(Ok(Data::Mixes(tiles))),
-                    Err(e) => send(Err(unreachable(&e))),
+                    let shown = places.iter().map(|p| match *p {
+                        HomePlace::Row { at } => shelves[at as usize].clone().map(|items| crate::app::Shelf { row: Some(rows[at as usize]), title: crate::text::home_row(rows[at as usize]).to_string(), items }),
+                        HomePlace::Feed { at } => feed.get(at as usize).map(|f| {
+                            let songs = (0..f.songs.len()).map(|n| Item::Song(f.songs.clone(), n));
+                            let rest = f.albums.iter().cloned().map(Item::Album).chain(f.playlists.iter().cloned().map(Item::Playlist)).chain(f.artists.iter().cloned().map(Item::Artist));
+                            crate::app::Shelf { row: None, title: f.title.clone(), items: songs.chain(rest).collect() }
+                        }),
+                    });
+                    send(Ok(Data::HomeShelves(shown.collect())));
                 });
             }
             Req::Browse => {
@@ -540,8 +556,8 @@ fn worded(s: Said) -> Option<Msg> {
     })
 }
 
-/// A page read's answer as a screen's data.
-fn data_of(got: PageGot) -> Data {
+/// A page read's answer as a screen's data; a playlist says whether the profile may change it.
+fn data_of(got: PageGot, editable: &dyn Fn(&nori_core::Playlist) -> bool) -> Data {
     match got {
         PageGot::Albums(v) => Data::Albums(v),
         PageGot::Artists(v) => Data::Artists(v),
@@ -551,7 +567,10 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Album(d) => Data::Album(d),
         PageGot::Artist(d) => Data::Artist(d),
         PageGot::ArtistAbout(a) => Data::ArtistAbout(a),
-        PageGot::Playlist(d) => Data::Playlist(d),
+        PageGot::Playlist(d) => {
+            let editable = editable(&d.playlist);
+            Data::Playlist(d, editable)
+        }
         PageGot::Mix(m) => Data::Mix(m),
         PageGot::Genres(v) => Data::Genres(v),
         PageGot::Genre { songs, .. } => Data::Genre(songs),

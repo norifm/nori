@@ -5,6 +5,7 @@
 use crate::burst::{Burst, Fed, BUFFER_US};
 use crate::engine::{Heard, Host, StreamFormat, StreamId, TransitionEngine};
 use crate::heard::{HeardTracker, PlayerNow, Seen, StreamAt};
+use crate::key::ItemKey;
 use crate::pcm::Format;
 use crate::playlist::Playlist;
 use crate::queue::{measure_ahead, ErrorRun, OnError, PlaybackError};
@@ -63,11 +64,11 @@ pub trait Reading {
 pub trait Songs {
     type Reading: Reading;
     /// Opens `id` from `from_ms`. An error is a song that will not play.
-    fn open(&mut self, id: &str, from_ms: i64) -> Result<Self::Reading, String>;
+    fn open(&mut self, id: &ItemKey, from_ms: i64) -> Result<Self::Reading, String>;
     /// Length as tagged, album and track number, for the planner and seek bar.
-    fn about(&self, id: &str) -> WindowSong;
+    fn about(&self, id: &ItemKey) -> WindowSong;
     /// `id` plays next; a platform may prefetch it.
-    fn upcoming(&mut self, _id: &str) {}
+    fn upcoming(&mut self, _id: &ItemKey) {}
 }
 
 /// The app around the player: planner, analysis store, log.
@@ -78,9 +79,9 @@ pub trait App: Host {
     fn auto_mix(&self) -> bool;
     /// The planner's window: the ids of the previous song, then the current and following in play
     /// order. `songs` describes them.
-    fn window<S: Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool);
+    fn window<S: Songs>(&mut self, songs: &S, ids: &[ItemKey], shuffling: bool);
     /// Measures the unmeasured songs among `ids`.
-    fn measure_ahead<S: Songs>(&mut self, _songs: &mut S, _ids: &[String]) {}
+    fn measure_ahead<S: Songs>(&mut self, _songs: &mut S, _ids: &[ItemKey]) {}
     /// Output moved to a device: its key and its bound sound, if any. `None` when the app does not
     /// track devices.
     fn output_changed(&mut self, _kind: crate::outputs::OutputKind, _name: &str) -> Option<(String, Option<Sound>)> {
@@ -114,7 +115,7 @@ pub trait App: Host {
         1.0
     }
     /// Song `id`'s measured integrated loudness, LUFS, for the stages; asked only while there are any.
-    fn loudness(&mut self, _id: &str) -> Option<f32> {
+    fn loudness(&mut self, _id: &ItemKey) -> Option<f32> {
         None
     }
     /// The sound changed (`what`: the chain or the gain) from output frame `at.output`, made from input
@@ -387,7 +388,7 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     head: Head<S::Reading>,
     /// The next song last prefetched ([`Songs::upcoming`]), and whether it waits for the song read to
     /// have its bytes first ([`Player::fetch_when_free`]).
-    upcoming: Option<String>,
+    upcoming: Option<ItemKey>,
     fetch_after: bool,
     /// Where the song being read started; cleared once the clock passes it (audio is audible).
     heard_from: Option<i64>,
@@ -403,7 +404,7 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     /// Song changes with their time; the platform drains them.
     pub changes: Vec<(i64, usize)>,
     /// Failed songs (id, reason); the platform drains them.
-    pub failures: Vec<(String, String)>,
+    pub failures: Vec<(ItemKey, String)>,
     pub errors: ErrorRun,
     /// Stop at the end of this song ([`Player::pause_at_end`]).
     stop_after: Option<usize>,
@@ -472,7 +473,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     }
 
     /// The id at list index `i`.
-    pub fn id_at(&self, i: usize) -> String {
+    pub fn id_at(&self, i: usize) -> ItemKey {
         self.queue.read(|q| q.ids()[i].clone())
     }
 
@@ -817,11 +818,11 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     }
     /// [`Player::jump`] reusing a reading opened ahead (id, reading, opened-at ms) if it is that song
     /// and can reach `from_ms` ([`taken_from`]); otherwise the song is reopened.
-    pub fn jump_from(&mut self, i: usize, from_ms: i64, opened: (String, S::Reading, i64)) {
+    pub fn jump_from(&mut self, i: usize, from_ms: i64, opened: (ItemKey, S::Reading, i64)) {
         self.jump_opened(i, from_ms, Some(opened));
     }
 
-    fn jump_opened(&mut self, i: usize, from_ms: i64, opened: Option<(String, S::Reading, i64)>) {
+    fn jump_opened(&mut self, i: usize, from_ms: i64, opened: Option<(ItemKey, S::Reading, i64)>) {
         self.stop_after = None;
         let i = self.playable(i);
         let id = self.id_at(i);
@@ -995,7 +996,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// Has the app measure upcoming songs, then replans.
     pub fn measure_ahead(&mut self) {
         let n = measure_ahead(self.app.auto_mix());
-        let ids: Vec<String> = self.queue.read(|q| q.upcoming().take(n).map(|i| q.ids()[i].clone()).collect());
+        let ids: Vec<ItemKey> = self.queue.read(|q| q.upcoming().take(n).map(|i| q.ids()[i].clone()).collect());
         if ids.is_empty() {
             return;
         }
@@ -1146,7 +1147,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
                     at = q.next_of(i, repeat);
                 }
             }
-            let ids: Vec<String> = window.into_iter().map(|i| q.ids()[i].clone()).collect();
+            let ids: Vec<ItemKey> = window.into_iter().map(|i| q.ids()[i].clone()).collect();
             (ids, q.shuffling())
         });
         self.app.window(&self.tracks, &ids, shuffling);
@@ -1211,7 +1212,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         }
     }
 
-    pub fn current_id(&self) -> Option<String> {
+    pub fn current_id(&self) -> Option<ItemKey> {
         self.current.map(|i| self.id_at(i))
     }
 
@@ -1345,7 +1346,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// State summary for diagnostics.
     pub fn words(&self) -> String {
-        let id = |i: usize| self.queue.read(|q| q.ids().get(i).cloned()).unwrap_or_else(|| "?".into());
+        let id = |i: usize| self.queue.read(|q| q.ids().get(i).map(ItemKey::to_string)).unwrap_or_else(|| "?".into());
         let mode = match self.mode {
             Mode::Paused => "paused",
             Mode::Priming => "priming",

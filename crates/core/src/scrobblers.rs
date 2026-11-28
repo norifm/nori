@@ -394,24 +394,16 @@ impl Client {
         Ok(SavedScrobbler { secret, session: key.into(), user: user.into(), ..account })
     }
 
-    /// Tells what [`nori_queue::Session::scrobble_track`] said to the server, when scrobbling is on
-    /// and the profile's rules let it count plays, and to the profile's accounts that are on, whatever
+    /// Tells what [`nori_queue::Session::scrobble_track`] said to the played song's source
+    /// ([`Client::tell_source`]), and to the profile's accounts that are on, whatever
     /// those say: their accounts are their own. A play the server can't take now waits in its queue
     /// of writes; one an account can't, in `scrobbles_waiting`.
     pub async fn scrobble(&self, send: ScrobbleSend) {
-        let server = self.settings().in_effect(|p| !p.active_server().is_some_and(|s| s.scrobble_off)) && self.core.rules().scrobbles;
-        if server {
-            if let Some(s) = &send.counted {
-                if let Err(e) = self.write(Write::Scrobble { id: s.id.clone(), submission: true, time_ms: Some(send.counted_at) }).await {
-                    crate::alog::info(&format!("scrobble: {e}"));
-                }
-            }
-            // Asked, not queued: replayed later it would no longer be true.
-            if let Some(s) = &send.playing {
-                if let Err(e) = self.read_now(Read::NowPlaying { id: s.id.clone() }).await {
-                    crate::alog::info(&format!("now playing: {e}"));
-                }
-            }
+        if let Some(s) = &send.counted {
+            self.tell_source(s, Some(send.counted_at)).await;
+        }
+        if let Some(s) = &send.playing {
+            self.tell_source(s, None).await;
         }
         let accounts: Vec<SavedScrobbler> = self.settings().prefs(|p| p.active_server().map(|s| s.scrobblers.iter().filter(|a| a.on).cloned().collect()).unwrap_or_default());
         if let Err(e) = self.core.waiting_trim(&accounts, crate::db::now_ms()) {
@@ -518,6 +510,42 @@ impl Client {
             return Err(NetError::Http { status: r.status });
         }
         answer(&r.body)
+    }
+}
+
+impl Client {
+    /// Tells the source `song` comes from that it was heard at `counted_at`, or plays now (None), when
+    /// that source's profile tells it what plays and its rules let it count plays. A song of a source the
+    /// profile no longer has is told nowhere.
+    async fn tell_source(&self, song: &Song, counted_at: Option<i64>) {
+        let other = match song.source.as_deref() {
+            None => None,
+            Some(id) => match self.core.source(id) {
+                Some(c) => Some((id.to_string(), c)),
+                None => return,
+            },
+        };
+        let client = other.as_ref().map_or(self, |(_, c)| &**c);
+        let off = self.settings().in_effect(|p| match &other {
+            Some((id, _)) => p.servers.iter().find(|s| s.id == *id).is_some_and(|s| s.scrobble_off),
+            None => p.active_server().is_some_and(|s| s.scrobble_off),
+        });
+        if off || !client.core.rules().scrobbles {
+            return;
+        }
+        match counted_at {
+            Some(at) => {
+                if let Err(e) = client.write(Write::Scrobble { id: song.id.clone(), submission: true, time_ms: Some(at) }).await {
+                    crate::alog::info(&format!("scrobble: {e}"));
+                }
+            }
+            // Asked, not queued: replayed later it would no longer be true.
+            None => {
+                if let Err(e) = client.read_now(Read::NowPlaying { id: song.id.clone() }).await {
+                    crate::alog::info(&format!("now playing: {e}"));
+                }
+            }
+        }
     }
 }
 

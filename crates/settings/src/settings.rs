@@ -1,7 +1,7 @@
 //! The settings record, its stored format (one value per key, plus the band list, sound profile and
 //! server profile formats), defaults, ranges and edits. No database access (see settings_store.rs).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use nori_model::{EqBand, EqKind, EqPreset, NamedPreset, TransitionPrefs};
 pub use nori_model::CompressorPreset;
@@ -579,6 +579,10 @@ pub struct SavedServer {
     pub scrobblers: Vec<SavedScrobbler>,
     /// The folders a local profile reads music from, where the user picks them (`nori_local::MusicPlace`).
     pub folders: Vec<String>,
+    /// The saved profiles it also plays from, browsed with its own as one library, in order
+    /// ([`profile_sources`]). A profile listed here is this one's source, not a profile of its own.
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub sources: Vec<String>,
 }
 
 /// A scrobbling account a profile's plays go to, whatever the profile plays from.
@@ -1377,6 +1381,7 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         scrobble_off: opt_bool(o, "scrobbleOff"),
         scrobblers: o.get("scrobblers").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(scrobbler_from).collect()),
         folders: o.get("folders").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(Value::as_str).map(String::from).collect()),
+        sources: o.get("sources").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().map(text).collect()),
     })
 }
 
@@ -1445,6 +1450,9 @@ fn server_json(s: &SavedServer) -> Value {
     }
     if !s.folders.is_empty() {
         v["folders"] = s.folders.clone().into();
+    }
+    if !s.sources.is_empty() {
+        v["sources"] = s.sources.clone().into();
     }
     v
 }
@@ -2168,13 +2176,78 @@ pub fn servers_updated(list: ServerList, profile: SavedServer) -> ServerList {
     ServerList { servers, ..list }
 }
 
-/// A profile removed. Removing the active one activates the first one left, or none.
+/// A profile removed, and from the sources of every other. Removing the active one activates the first
+/// one shown left ([`servers_shown`]), or none; its sources are profiles of their own again.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn servers_removed(list: ServerList, id: String) -> ServerList {
     let was_active = list.active_server_id == id;
-    let servers: Vec<SavedServer> = list.servers.into_iter().filter(|s| s.id != id).collect();
-    let active_server_id = if was_active { servers.first().map(|s| s.id.clone()).unwrap_or_default() } else { list.active_server_id };
+    let servers: Vec<SavedServer> = list.servers.into_iter().filter(|s| s.id != id).map(|s| profile_source_removed(s, id.clone())).collect();
+    let active_server_id = if was_active { servers_shown(servers.clone()).first().map(|s| s.id.clone()).unwrap_or_default() } else { list.active_server_id };
     ServerList { servers, active_server_id }
+}
+
+/// The other saved profiles `profile` plays from, in its order: each found once, never itself
+/// ([`SavedServer::sources`]). A source's own sources are not followed.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_sources(servers: Vec<SavedServer>, profile: SavedServer) -> Vec<SavedServer> {
+    let mut found: Vec<SavedServer> = Vec::new();
+    for id in &profile.sources {
+        if *id != profile.id && !found.iter().any(|f| f.id == *id) {
+            found.extend(servers.iter().find(|s| s.id == *id).cloned());
+        }
+    }
+    found
+}
+
+/// The saved profile an item of `source` comes from: the profile in use, `active`, for its own (None),
+/// else the saved profile of that id.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn source_profile(servers: Vec<SavedServer>, active: String, source: Option<String>) -> Option<SavedServer> {
+    let id = source.unwrap_or(active);
+    servers.into_iter().find(|s| s.id == id)
+}
+
+/// The profiles a profile list shows: those no other profile plays from as its source.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn servers_shown(servers: Vec<SavedServer>) -> Vec<SavedServer> {
+    let sources: HashSet<String> = servers.iter().flat_map(|s| profile_sources(servers.clone(), s.clone())).map(|s| s.id).collect();
+    servers.into_iter().filter(|s| !sources.contains(&s.id)).collect()
+}
+
+/// `source` saved (in place of its namesake by id, else last) as a source of profile `to`, after its
+/// others. The profile in use stays in use, unless it is the source: a source is no profile of its own,
+/// so `to` is in use then (a source just signed in to from `to`'s Edit page).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn servers_source_added(list: ServerList, to: String, source: SavedServer) -> ServerList {
+    let id = source.id.clone();
+    let mut servers = list.servers;
+    match servers.iter_mut().find(|s| s.id == id) {
+        Some(saved) => *saved = source,
+        None => servers.push(source),
+    }
+    for s in servers.iter_mut().filter(|s| s.id == to && s.id != id && !s.sources.contains(&id)) {
+        s.sources.push(id.clone());
+    }
+    let active_server_id = if list.active_server_id == id { to } else { list.active_server_id };
+    ServerList { servers, active_server_id }
+}
+
+/// `profile` without source `id`, which is a profile of its own again.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_source_removed(mut profile: SavedServer, id: String) -> SavedServer {
+    profile.sources.retain(|s| *s != id);
+    profile
+}
+
+/// `profile` with source `id` moved to place `to` among its sources (past the end is last).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_source_placed(mut profile: SavedServer, id: String, to: u32) -> SavedServer {
+    if let Some(at) = profile.sources.iter().position(|s| *s == id) {
+        let moved = profile.sources.remove(at);
+        let to = (to as usize).min(profile.sources.len());
+        profile.sources.insert(to, moved);
+    }
+    profile
 }
 
 /// The profiles once a backup's are restored: the backup's first, then those here, which stay as they
@@ -2831,6 +2904,46 @@ mod tests {
             assert_eq!(server_from(&server_json(&p)), Some(p));
         }
         assert!(server_json(&SavedServer::default()).get("proxy").is_none());
+    }
+
+    fn with_sources(id: &str, sources: &[&str]) -> SavedServer {
+        SavedServer { id: id.into(), sources: sources.iter().map(|s| s.to_string()).collect(), ..SavedServer::default() }
+    }
+
+    fn ids(servers: &[SavedServer]) -> Vec<&str> {
+        servers.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    /// A profile's sources come in its order, each once; itself, one not saved and a source's own sources
+    /// are not among them.
+    #[test]
+    fn a_profile_plays_from_its_sources_in_order() {
+        let servers = vec![with_sources("home", &["yt", "home", "gone", "nd", "yt"]), with_sources("yt", &["sc"]), with_sources("nd", &[]), with_sources("sc", &[])];
+        assert_eq!(ids(&profile_sources(servers.clone(), servers[0].clone())), ["yt", "nd"]);
+        assert_eq!(ids(&servers_shown(servers.clone())), ["home"], "a source shows inside its profile; a source's source too");
+        let stored = server_json(&servers[0]);
+        assert_eq!(server_from(&stored).unwrap(), servers[0], "kept");
+        assert!(server_json(&servers[2]).get("sources").is_none(), "a profile of one source is stored as before");
+    }
+
+    /// Adding a source saves it and lists it last; removing one makes it a profile of its own again;
+    /// removing a profile takes it out of every profile's sources.
+    #[test]
+    fn sources_are_added_placed_and_removed() {
+        let list = ServerList { servers: vec![with_sources("home", &["a"]), with_sources("a", &[])], active_server_id: "home".into() };
+        let added = servers_source_added(list.clone(), "home".into(), with_sources("b", &[]));
+        assert_eq!((ids(&added.servers), added.servers[0].sources.clone(), added.active_server_id.as_str()), (vec!["home", "a", "b"], vec!["a".to_string(), "b".to_string()], "home"));
+        assert_eq!(servers_source_added(added.clone(), "home".into(), with_sources("b", &[])).servers[0].sources, ["a", "b"], "added again, listed once");
+        let signed_in = ServerList { active_server_id: "c".into(), ..added.clone() };
+        assert_eq!(servers_source_added(signed_in, "home".into(), with_sources("c", &[])).active_server_id, "home", "a source just signed in to is no profile in use");
+        assert_eq!(profile_source_placed(added.servers[0].clone(), "b".into(), 0).sources, ["b", "a"]);
+        assert_eq!(profile_source_placed(added.servers[0].clone(), "a".into(), 9).sources, ["b", "a"], "past the end is last");
+        let left = profile_source_removed(added.servers[0].clone(), "a".into());
+        assert_eq!(ids(&servers_shown(vec![left, with_sources("a", &[])])), ["home", "a"]);
+        let removed = servers_removed(added.clone(), "a".into());
+        assert_eq!(removed.servers[0].sources, ["b"]);
+        let removed = servers_removed(added, "home".into());
+        assert_eq!((ids(&removed.servers), removed.active_server_id.as_str()), (vec!["a", "b"], "a"), "its sources stand alone again");
     }
 
     /// A profile's scrobbling accounts are kept; one of a kind nori doesn't have is left out.

@@ -19,7 +19,7 @@ impl Core {
         }
         let (songs, kept) = self.session.store(|s| {
             let mut songs = Vec::with_capacity(now.ids.len());
-            let kept = now.ids.iter().map(|id| s.songs.get(id).filter(|_| !is_radio(id)).map(|(song, _)| songs.push(song.clone())).is_some()).collect();
+            let kept = now.ids.iter().map(|id| s.songs.get(id).filter(|_| !is_radio(&id.id)).map(|(song, _)| songs.push(song.clone())).is_some()).collect();
             (songs, kept)
         });
         let mut s = SavedQueue { now, kept, stamp: String::new() };
@@ -45,7 +45,7 @@ impl Core {
 /// the page it came from.
 #[derive(PartialEq)]
 pub(crate) struct Kept {
-    pub(crate) ids: Vec<String>,
+    pub(crate) ids: Vec<crate::ItemKey>,
     pub(crate) order: Option<Vec<u32>>,
     pub(crate) repeat: u8,
     pub(crate) hands: Vec<Hand>,

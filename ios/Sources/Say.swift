@@ -626,6 +626,8 @@ enum Say {
     static let moveUp = "Move up"
     static let moveDown = "Move down"
     static func addedToPlaylist(_ name: String) -> String { "Added to \(name)" }
+    /// A playlist of one source, `on`, which takes only that source's songs.
+    static func takesOnlyItsSongs(_ name: String, on: String) -> String { "\(name) is on \(on), so it takes only songs from there" }
     static func playlistCreated(_ name: String) -> String { "Created \(name)" }
     static func deleteNamed(_ name: String) -> String { "Delete \(name)" }
 

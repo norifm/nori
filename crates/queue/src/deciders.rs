@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use nori_model::deciders::{ButtonAct, Deciders, Focus, FocusAct, Press, Shown};
-use nori_model::Song;
+use nori_model::{ItemKey, Song};
 use nori_look::theme::{readable, Palette};
 use nori_player::gain::BOOST_MAX_DB;
 
@@ -22,9 +22,9 @@ const REMEMBERED: usize = 16;
 #[derive(Default)]
 pub(crate) struct Decided {
     /// Song, nori's gain in dB, the gain decided (None: nori's).
-    leveled: Vec<(String, f32, Option<f32>)>,
+    leveled: Vec<(ItemKey, f32, Option<f32>)>,
     /// Song, nori's lines, the lines decided (None: nori's).
-    shown: Vec<(String, Shown, Option<Shown>)>,
+    shown: Vec<(ItemKey, Shown, Option<Shown>)>,
     /// nori's palette, the cover's color, night, the palette decided (None: nori's).
     looks: Vec<(Palette, Option<u32>, bool, Option<Palette>)>,
 }
@@ -75,7 +75,7 @@ impl Session {
     pub(crate) fn decide_shuffle(&self) {
         let Some(d) = self.deciders() else { return };
         let Some((ids, nori, rev)) = self.playlist(|p| p.shuffle_order().map(|o| (p.ids().to_vec(), o.iter().map(|&i| i as u32).collect::<Vec<_>>(), p.rev()))) else { return };
-        let songs: Vec<Song> = ids.iter().map(|id| self.song(id).unwrap_or_else(|| Song::only_id(id.clone()))).collect();
+        let songs: Vec<Song> = ids.iter().map(|id| self.song(id).unwrap_or_else(|| Song::only_key(id.clone()))).collect();
         let Some(order) = d.shuffle(&songs, &nori, &|o| fits_shuffle(o, &nori)) else { return };
         let mut q = self.queue.lock();
         // Changed meanwhile: nori's order stands.
@@ -91,7 +91,7 @@ impl Session {
     }
 
     /// `nori` (a linear gain) for song `id`, or a plugin's gain within nori's range.
-    pub(crate) fn decide_leveling(&self, id: &str, nori: f32) -> f32 {
+    pub(crate) fn decide_leveling(&self, id: &ItemKey, nori: f32) -> f32 {
         let Some(d) = self.deciders() else { return nori };
         let nori_db = 20.0 * nori.max(1e-6).log10();
         let gain = |db: Option<f32>| db.map_or(nori, |db| 10f32.powf(db / 20.0));
@@ -100,7 +100,7 @@ impl Session {
         }
         let Some(song) = self.song(id) else { return nori };
         let db = d.leveling(&song, nori_db, &|db| db.is_finite() && (QUIETEST_DB..=BOOST_MAX_DB).contains(&db));
-        remember(&mut self.decided.lock().leveled, (id.to_string(), nori_db, db));
+        remember(&mut self.decided.lock().leveled, (id.clone(), nori_db, db));
         gain(db)
     }
 }
@@ -115,7 +115,7 @@ impl Session {
 
     /// What the notification, lock screen and media controls show for queued song `id` in place of its
     /// own lines: a plugin's, with a title; None for its own.
-    pub fn now_playing(&self, id: String) -> Option<Shown> {
+    pub fn now_playing(&self, id: ItemKey) -> Option<Shown> {
         let d = self.deciders()?;
         let song = self.song(&id)?;
         let nori = Shown::of(&song);
@@ -217,8 +217,8 @@ mod tests {
 
     fn queued(n: usize, at: u32) -> Session {
         let s = Session::default();
-        let ids: Vec<String> = (0..n).map(|i| format!("q{i}")).collect();
-        s.register(ids.iter().map(|id| Song { id: id.clone(), title: id.clone(), ..Default::default() }).collect());
+        let ids: Vec<ItemKey> = (0..n).map(|i| ItemKey::own(format!("q{i}"))).collect();
+        s.register(ids.iter().map(|id| Song { id: id.id.clone(), title: id.id.clone(), ..Default::default() }).collect());
         s.set(ids, Some(at), false, None);
         s
     }
@@ -258,13 +258,13 @@ mod tests {
     fn leveling_is_decided_within_nori_range_and_once_per_song() {
         let s = queued(2, 0);
         let f = deciding(&s, Fake { on: true, db: Some(-3.0), ..Default::default() });
-        let g = s.decide_leveling("q0", 0.5);
+        let g = s.decide_leveling(&ItemKey::own("q0"), 0.5);
         assert!((20.0 * g.log10() + 3.0).abs() < 1e-4, "{g}");
-        s.decide_leveling("q0", 0.5);
+        s.decide_leveling(&ItemKey::own("q0"), 0.5);
         assert_eq!(*f.asked.lock(), 1, "remembered");
         let s = queued(2, 0);
         deciding(&s, Fake { on: true, db: Some(BOOST_MAX_DB + 6.0), ..Default::default() });
-        assert_eq!(s.decide_leveling("q0", 0.5), 0.5, "past nori's range: nori's");
+        assert_eq!(s.decide_leveling(&ItemKey::own("q0"), 0.5), 0.5, "past nori's range: nori's");
     }
 
     #[test]
@@ -273,10 +273,10 @@ mod tests {
         deciding(&s, Fake { on: true, act: Some(ButtonAct::PlayPause), focus: Some(FocusAct::KeepPlaying), shown: Some(Shown { title: "T".into(), ..Default::default() }), ..Default::default() });
         assert_eq!(s.media_button(Press::Next), ButtonAct::PlayPause);
         assert_eq!(s.decide_focus(Focus::LostTransient, FocusAct::Pause), FocusAct::KeepPlaying);
-        assert_eq!(s.now_playing("q0".into()).map(|s| s.title).as_deref(), Some("T"));
+        assert_eq!(s.now_playing(ItemKey::own("q0")).map(|s| s.title).as_deref(), Some("T"));
         let s = queued(1, 0);
         deciding(&s, Fake { on: true, shown: Some(Shown { title: " ".into(), ..Default::default() }), ..Default::default() });
-        assert_eq!(s.now_playing("q0".into()), None, "no title: nori's");
+        assert_eq!(s.now_playing(ItemKey::own("q0")), None, "no title: nori's");
     }
 
     #[test]

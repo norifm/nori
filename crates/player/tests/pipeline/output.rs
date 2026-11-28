@@ -1,5 +1,6 @@
 //! Output feeding: bursts, and one format per queue with conversion or reopening.
 
+use nori_player::key::ItemKey;
 use std::f64::consts::TAU;
 
 use nori_player::burst::{BUFFER_US, LOW_US};
@@ -144,7 +145,7 @@ fn moves_while_the_next_format_waits_play_in_the_songs_format() {
                 }
                 Move::NextAdded => {
                     p.tracks.push(song("x", formats[3], hz[3]));
-                    p.queue.live.add(vec!["x".into()], Hand::Next);
+                    p.queue.live.add(vec![ItemKey::own("x")], Hand::Next);
                     p.queue_changed();
                     p.replan_ending();
                     assert!(p.app.logged("the ending of a is made again"), "{case}: {:?}", p.app.log);

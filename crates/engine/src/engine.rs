@@ -10,6 +10,7 @@
 //! behind a short dip where the ear is, or at a song boundary; leaving it, the CPU opens the song
 //! [`REMAKE_LEAD_MS`] ahead first so the handover is never a gap.
 
+use nori_player::key::ItemKey;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -133,14 +134,14 @@ pub enum Event {
     /// The audible song changed. `jumps`: the jumps asked for by then ([`Engine::play_at`] and the
     /// like), so a client that asked for a later one knows this predates it. `seq`: the entry
     /// (`Playlist::seqs`), for a client whose queue was edited since `index`.
-    Song { index: usize, seq: Option<u64>, id: String, jumps: u64 },
+    Song { index: usize, seq: Option<u64>, id: ItemKey, jumps: u64 },
     /// The song restarted by itself (repeat one).
-    Looped { index: usize, seq: Option<u64>, id: String, jumps: u64 },
+    Looped { index: usize, seq: Option<u64>, id: ItemKey, jumps: u64 },
     /// The position: at the pace of [`Engine::position_updates`], and once when a seek or jump lands.
     /// `jumps`: as [`Event::Song`]'s, so a client knows which of its jumps landed.
     Position { index: usize, ms: i64, jumps: u64 },
-    /// A song would not play, or the output would not open (`id` empty).
-    Error { id: String, message: String },
+    /// A song would not play, or the output would not open (`id` None).
+    Error { id: Option<ItemKey>, message: String },
     /// The music goes to another output device, by the core's device name.
     Output { name: String },
     /// Playback ran dry waiting for a song's bytes (`true`), or resumed.
@@ -199,7 +200,7 @@ pub struct Lead {
     pub speed: f32,
     pub pitch: f32,
     /// The transition out of a song there (its id), once planned.
-    pub mix: Option<(String, Plan)>,
+    pub mix: Option<(ItemKey, Plan)>,
 
     /// The outgoing side's position and rate at the same moment as `ms`.
     pub mix_place: Option<(usize, f64, f64)>,
@@ -210,7 +211,7 @@ struct Leading {
     led: Led,
     speed: f32,
     pitch: f32,
-    mix: Option<(String, Plan)>,
+    mix: Option<(ItemKey, Plan)>,
     mix_place: Option<Led>,
 }
 
@@ -220,7 +221,7 @@ pub struct Status {
     pub state: State,
     /// The audible song: queue index and id, and the position in it at `at`, ms.
     pub index: Option<usize>,
-    pub id: Option<String>,
+    pub id: Option<ItemKey>,
     pub position_ms: i64,
     pub at: Instant,
     /// Paused while the music heard fades out: the place runs on until then ([`run_ms`]).
@@ -828,13 +829,13 @@ struct Parked {
 
 enum Parking {
     /// Chosen while paused: the status shows it, by its id, at once.
-    Chosen(String),
+    Chosen(ItemKey),
     /// Where the player was when the output was let go.
     LetGo,
 }
 
 impl Parked {
-    fn chosen(at: usize, ms: i64, id: String) -> Parked {
+    fn chosen(at: usize, ms: i64, id: ItemKey) -> Parked {
         Parked { at, ms, why: Parking::Chosen(id) }
     }
 
@@ -868,7 +869,7 @@ enum Card {
 /// The offloaded song opened on the CPU ahead of the output's decoder, taken over at `from_ms` behind a
 /// dip starting at `dip_at` (engine ms) while the output plays on.
 struct Takeover {
-    id: String,
+    id: ItemKey,
     from_ms: i64,
     r: Demuxed,
     ready: bool,
@@ -918,7 +919,7 @@ struct OffloadRecord {
 #[derive(Default)]
 struct Told {
     /// The song, by index and id (a new queue can put another song at the same index).
-    heard: Option<(usize, String)>,
+    heard: Option<(usize, ItemKey)>,
     loops: u32,
     stalled: bool,
     /// Since when (engine ms) a stall has gone on, and whether it was logged ([`Worker::say_waits`]).
@@ -1097,7 +1098,7 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     panics: VecDeque<i64>,
     stall: Option<Stall>,
     /// The song last opened again from scratch: the same with nothing heard since has failed.
-    restarted: Option<String>,
+    restarted: Option<ItemKey>,
     /// A jump under way: a panic during it restarts there.
     jumping: Option<(usize, i64)>,
     /// Why the song plays on the CPU, in words: kept to compare with the status's without allocating.
@@ -1413,7 +1414,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// The CPU plays song `i` from `ms` (opened ahead as `opened` if given), the offload path let go.
     /// Returns the level to come back up from when playing.
-    fn onto_cpu(&mut self, i: usize, ms: i64, opened: Option<(String, Demuxed, i64)>) -> Option<f32> {
+    fn onto_cpu(&mut self, i: usize, ms: i64, opened: Option<(ItemKey, Demuxed, i64)>) -> Option<f32> {
         let playing = self.going();
         self.leave_offload();
         match opened {
@@ -1597,8 +1598,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         self.panics.push_back(now);
         let on = self.jumping.map(|j| j.0).or_else(|| self.current()).or_else(|| self.p.queue.read(|q| q.current())).map(|i| self.p.id_at(i));
-        let song = on.as_deref().map(|id| format!(" on {id}")).unwrap_or_default();
-        let id = on.unwrap_or_default();
+        let song = on.as_ref().map(|id| format!(" on {id}")).unwrap_or_default();
+        let id = on;
         if self.panics.len() >= PANICS_KEPT_ON {
             self.p.app.log(&format!("the engine's thread panicked{song} ({why}), {} times within a minute: playback stops", self.panics.len()));
             self.jumping = None;
@@ -1645,7 +1646,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         };
         let id = self.p.id_at(i);
         self.p.tracks.forget(&id);
-        if self.restarted.as_deref() == Some(id.as_str()) {
+        if self.restarted.as_ref() == Some(&id) {
             self.restarted = None;
             self.p.app.log(&format!("{id} made no music again ({why}): it counts as a song that would not play"));
             self.p.give_up(i, format!("no music came of it ({why})"));
@@ -1701,7 +1702,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if long >= STALL_RESTART_MS {
             let words = self.words((self.p.sink.track.filled_us() + self.p.sink.track.latency_us()) / 1000);
             self.p.app.log(&format!("playing, and the music stood still for {long} ms with nothing on its way: {words}"));
-            let id = self.current().map(|i| self.p.id_at(i)).unwrap_or_default();
+            let id = self.current().map(|i| self.p.id_at(i));
             (self.events)(Event::Error { id, message: format!("no music for {} s while playing: the song is opened again from scratch", long / 1000) });
             self.start_again(&format!("the music stood still for {long} ms"));
         }
@@ -2803,14 +2804,14 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         if let Some(message) = self.p.sink.track.take_failure() {
             self.p.app.log(&format!("the output failed: {message}"));
-            (self.events)(Event::Error { id: String::new(), message });
+            (self.events)(Event::Error { id: None, message });
             self.p.pause();
             self.set_state(State::Idle);
             // Let go as after a long pause: the next play opens a new device.
             self.let_go();
         }
         for (id, message) in std::mem::take(&mut self.p.failures) {
-            (self.events)(Event::Error { id, message });
+            (self.events)(Event::Error { id: Some(id), message });
         }
         self.p.changes.clear();
         if self.p.source_ended() {
@@ -2977,7 +2978,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Whether song `i` (with `id`) is another than the one last reported. With no jump pending, a new
     /// queue can put another song at the same index.
-    fn other(&self, i: usize, id: Option<&str>) -> bool {
+    fn other(&self, i: usize, id: Option<&ItemKey>) -> bool {
         match &self.told.heard {
             Some((h, heard_id)) if *h == i => match id {
                 Some(id) => id != heard_id,
@@ -3161,15 +3162,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// Writes the song, place (as of `at`), state and releases into the status, then `more`; returns
     /// whether a mix was audible before.
     fn write_status(&mut self, i: usize, ms: i64, at: Instant, more: impl FnOnce(&mut Status)) -> bool {
-        let id = self.told.heard.as_ref().map(|h| h.1.as_str());
+        let id = self.told.heard.as_ref().map(|h| &h.1);
         let mut s = self.status.lock();
         let was = s.mixing;
         // A press not taken yet shows what it asks for: this reading is from before it.
         if self.pressed.load(Ordering::Acquire) == 0 {
             s.state = self.state();
-            if s.index != Some(i) || s.id.as_deref() != id {
+            if s.index != Some(i) || s.id.as_ref() != id {
                 s.index = Some(i);
-                s.id = id.map(str::to_owned);
+                s.id = id.cloned();
             }
             s.position_ms = ms;
             s.at = at;

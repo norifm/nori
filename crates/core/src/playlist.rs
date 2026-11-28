@@ -21,9 +21,9 @@ impl Core {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
     /// Saves the queue as the server's play queue ([`nori_queue::Session::to_push`]), at `current` and `position_ms`.
-    pub async fn playlist_push(&self, current: Option<String>, position_ms: i64) -> NetResult<()> {
-        let place = current.clone().map(|song| crate::library::QueuePlace { song, position_ms: position_ms.max(0) as u64 });
-        match self.core.session.push_write(current, position_ms) {
+    pub async fn playlist_push(&self, current: Option<crate::ItemKey>, position_ms: i64) -> NetResult<()> {
+        let place = current.as_ref().and_then(crate::ItemKey::own_id).map(|song| crate::library::QueuePlace { song: song.to_string(), position_ms: position_ms.max(0) as u64 });
+        match self.core.session.push_write(current.as_ref(), position_ms) {
             Some(w) => {
                 self.write(w).await?;
                 self.remember_queue_place(crate::library::QUEUE_PUSHED, place);
@@ -55,11 +55,12 @@ pub(crate) mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::ItemKey;
 
     /// A core over its own queue, playing `ids` from `start`.
     pub(crate) fn core(ids: &[&str], start: u32) -> Arc<crate::Core> {
         let core = crate::Core::new(String::new(), "t".into(), Arc::default()).unwrap();
-        core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(start), false, None);
+        core.session.set(ids.iter().map(|s| s.to_string()).map(ItemKey::own).collect(), Some(start), false, None);
         core
     }
 
@@ -72,21 +73,21 @@ pub(crate) mod tests {
             let song = |id: &str| Song { id: id.into(), ..Default::default() };
             s.register(vec![song("sv1"), song("sv2"), song("sv3")]);
             let from = PageOrigin::new(OriginKind::Playlist, "pl-7");
-            s.set(vec!["sv1".into(), "sv2".into()], Some(1), false, Some(from.clone()));
+            s.set(vec![ItemKey::own("sv1"), ItemKey::own("sv2")], Some(1), false, Some(from.clone()));
             // Edits and the offline bridge keep the origin.
-            s.take(9, vec!["sv3".into()], vec![Hand::Last]);
-            s.edit_splice(|p| p.bridge(vec!["sv3".into()]), vec![]);
+            s.take(9, vec![ItemKey::own("sv3")], vec![Hand::Last]);
+            s.edit_splice(|p| p.bridge(vec![ItemKey::own("sv3")]), vec![]);
             s.unbridge();
             assert_eq!(s.origin(), Some(from.clone()));
             core.playlist_save(1500).unwrap();
 
             let q = core.load_queue().unwrap();
             assert_eq!((q.songs.len(), q.index, q.origin.as_ref()), (3, 1, Some(&from)));
-            s.set(q.songs.iter().map(|s| s.id.clone()).collect(), Some(q.index), false, q.origin);
+            s.set(q.songs.iter().map(|s| s.id.clone()).map(ItemKey::own).collect(), Some(q.index), false, q.origin);
             assert!(s.from_page(&nori_library::pages::PageQueue::new(from)));
 
             // No origin, a pre-origin save, or an unknown kind: songs still restore.
-            s.set(vec!["sv1".into()], Some(0), false, None);
+            s.set(vec![ItemKey::own("sv1")], Some(0), false, None);
             core.playlist_save(0).unwrap();
             assert_eq!(core.load_queue().unwrap().origin, None);
             for origin in ["", r#","origin":{"kind":"Nebula","id":"x"}"#] {
@@ -120,8 +121,8 @@ pub(crate) mod tests {
         assert_eq!((q.order, q.repeat, q.index), (Some(kept), nori_player::playlist::REPEAT_ALL, 1));
 
         // The songs added by hand or by autofill keep their marks, counted among the songs kept.
-        core.session.take(5, vec!["o1".into()], vec![Hand::Last]);
-        core.session.take(6, vec!["o2".into()], vec![Hand::Auto]);
+        core.session.take(5, vec![ItemKey::own("o1")], vec![Hand::Last]);
+        core.session.take(6, vec![ItemKey::own("o2")], vec![Hand::Auto]);
         core.playlist_save(0).unwrap();
         let q = core.load_queue().unwrap();
         assert_eq!((q.queued, q.auto), (vec![4], vec![5]));
@@ -161,7 +162,7 @@ pub(crate) mod tests {
         let q = core.load_queue().unwrap();
         assert_eq!((q.index, q.position_ms, q.songs.len()), (2, 4200, 3));
 
-        core.session.set(vec!["w2".into(), "w1".into()], Some(0), false, None);
+        core.session.set(vec![ItemKey::own("w2"), ItemKey::own("w1")], Some(0), false, None);
         core.playlist_save(10).unwrap();
         let q = core.load_queue().unwrap();
         assert_eq!((q.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), q.index, q.position_ms), (vec!["w2", "w1"], 0, 10));
@@ -174,7 +175,7 @@ pub(crate) mod tests {
         let app = |ids: &[&str], start: u32| {
             let core = crate::Core::new(path.clone(), "t".into(), Arc::default()).unwrap();
             core.session.register(ids.iter().map(|id| crate::Song { id: id.to_string(), ..Default::default() }).collect());
-            core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(start), false, None);
+            core.session.set(ids.iter().map(|s| s.to_string()).map(ItemKey::own).collect(), Some(start), false, None);
             core
         };
         let restored = || {

@@ -88,18 +88,18 @@ impl Core {
         if picks.is_empty() {
             return Ok(None);
         }
-        let ids = picks.iter().map(|s| s.id.clone()).collect();
+        let ids = picks.iter().map(crate::Keyed::key).collect();
         self.session.register(picks.clone());
         Ok(self.session.edit_splice(|p| p.bridge(ids), picks))
     }
 
     /// The first downloaded song after the current one in play order.
     pub(crate) fn bridge_next_downloaded(&self) -> Result<Option<u32>> {
-        let after: Vec<(usize, String)> = self.session.playlist(|p| p.upcoming().skip(1).map(|i| (i, p.ids()[i].clone())).collect());
+        let after: Vec<(usize, crate::ItemKey)> = self.session.playlist(|p| p.upcoming().skip(1).map(|i| (i, p.ids()[i].clone())).collect());
         let c = self.db.lock();
-        let mut st = c.prepare_cached("SELECT 1 FROM downloads WHERE server=sid() AND id=?1 AND done=1")?;
+        let mut st = c.prepare_cached(concat!("SELECT 1 FROM downloads WHERE ", crate::db::of_key!(), " AND done=1"))?;
         for (i, id) in after {
-            if st.exists([id])? {
+            if st.exists(crate::db::key_params(&id))? {
                 return Ok(Some(i as u32));
             }
         }
@@ -122,6 +122,7 @@ pub enum BridgeTake {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ItemKey;
     use crate::Song;
 
     fn song(id: &str, artist: &str, album: &str, starred: bool) -> Song {
@@ -133,7 +134,7 @@ pub(crate) mod tests {
         let core = crate::playlist::tests::core(&["on1", "on2"], 0);
         for id in ["dl1", "dl2"] {
             core.download_queue(vec![song(id, "Muse", "x", false)]).unwrap();
-            core.download_done(id.into()).unwrap();
+            core.download_done(ItemKey::own(id)).unwrap();
         }
         core.session.register(vec![song("on1", "Muse", "y", false), song("on2", "Muse", "y", false)]);
         assert_eq!(core.bridge_next_downloaded().unwrap(), None);
@@ -142,18 +143,18 @@ pub(crate) mod tests {
         assert!(core.session.bridge_state().bridging);
         let back = core.session.unbridge().unwrap();
         assert_eq!((back.remove, back.seek), (vec![0, 2], Some(0)));
-        assert_eq!(core.session.upcoming(5), vec!["on1".to_string(), "on2".to_string()]);
+        assert_eq!(core.session.upcoming(5), crate::tests::keys(&["on1", "on2"]));
 
         // Bridge take prefers jump then bridge.
         let core = crate::playlist::tests::core(&["tk1", "tk2", "tk3"], 0);
         core.session.register(vec![song("tk1", "Muse", "y", false), song("tk2", "Muse", "y", false), song("tk3", "Muse", "y", false)]);
         assert!(matches!(core.bridge_take(), BridgeTake::Skip), "nothing downloaded");
         core.download_queue(vec![song("tk3", "Muse", "y", false)]).unwrap();
-        core.download_done("tk3".into()).unwrap();
+        core.download_done(ItemKey::own("tk3")).unwrap();
         assert!(matches!(core.bridge_take(), BridgeTake::Jump { index: 2 }));
         core.session.moved_to(2);
         core.download_queue(vec![song("tk9", "Muse", "x", false)]).unwrap();
-        core.download_done("tk9".into()).unwrap();
+        core.download_done(ItemKey::own("tk9")).unwrap();
         match core.bridge_take() {
             BridgeTake::Bridged { edit } => assert_eq!(edit.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["tk9"]),
             t => panic!("{t:?}"),
@@ -169,13 +170,13 @@ pub(crate) mod tests {
         let profile = || crate::client::NetProfile { url: "h".into(), ..Default::default() };
         let bridged = || {
             let (c, fake) = client(profile());
-            c.core.session.set(vec!["on1".into(), "on2".into()], Some(0), false, None);
+            c.core.session.set(vec![ItemKey::own("on1"), ItemKey::own("on2")], Some(0), false, None);
             c.core.session.register(vec![song("on1", "Muse", "y", false), song("on2", "Muse", "y", false)]);
             // Enough for a second batch.
             for k in 0..BATCH * 2 {
                 let id = format!("dl{k}");
                 c.core.download_queue(vec![song(&id, "Muse", "x", false)]).unwrap();
-                c.core.download_done(id).unwrap();
+                c.core.download_done(ItemKey::own(id)).unwrap();
             }
             assert!(c.core.bridge_start().unwrap().is_some());
             (c, fake)
@@ -222,7 +223,7 @@ pub(crate) mod tests {
             assert_eq!((edit.is_some(), c.core.session.bridge_state().bridging), (up, !up), "left the bridge, server up {up}");
             if let Some(edit) = edit {
                 assert_eq!(edit.seek, None, "the song skipped to plays on");
-                assert_eq!(c.core.session.bridge_state().current.as_deref(), Some("on2"));
+                assert_eq!(c.core.session.bridge_state().current, Some(ItemKey::own("on2")));
             }
         }
 

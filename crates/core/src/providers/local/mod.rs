@@ -14,12 +14,12 @@ use parking_lot::{Mutex, RwLock};
 
 pub use nori_local::{DevicePlaylist, Files, FoundFile, MediaSource, MusicPlace};
 
-use super::{nowhere, Answer, FieldSpec, FormField, Provider, ProviderInfo};
+use super::{nowhere, Answer, FieldSpec, FormField, Provider, ProviderInfo, Stream};
 use crate::browse::{LibrarySection, ProfileRules, SettingsPart};
 use crate::cache_policy::Read;
 use crate::client::{Client, NetResult, Write};
 use crate::settings::{SavedServer, ServerKind};
-use crate::stream::{StreamQuality, StreamTarget};
+use crate::stream::StreamQuality;
 use crate::transport::Transport;
 use crate::{Core, IngestStats};
 
@@ -175,9 +175,9 @@ impl Provider for Local {
     }
 
     /// Its file; a song plays from it ([`Provider::file`]), never through a stream.
-    fn stream(&self, client: &Client, id: String, _: StreamQuality) -> StreamTarget {
+    fn stream(&self, client: &Client, id: String, _: StreamQuality) -> Stream {
         let url = reads::path(&client.core, &id).unwrap_or_default();
-        StreamTarget { url, key: format!("{id}:0") }
+        Stream { url, quality: "0".into() }
     }
 
     /// The next song opens from its file: nothing is fetched ahead.
@@ -299,11 +299,11 @@ mod tests {
         assert_eq!(titles(&first.songs), ["Opening", "Closing"]);
         let cover = dir.join("Ann/First/cover.jpg").to_string_lossy().into_owned();
         assert_eq!(first.album.cover_art.as_deref(), Some(cover.as_str()));
-        assert_eq!(c.core.cover_address(cover.clone(), 300), format!("file://{cover}"));
+        assert_eq!(c.core.cover_address(cover.clone(), 300).as_deref(), Some(format!("file://{cover}").as_str()));
         assert_eq!(nori_local::cover_bytes(&cover).unwrap(), b"jpeg");
         let up = song(&c, "Up");
         assert_eq!(nori_local::cover_bytes(up.cover_art.as_deref().unwrap()).unwrap(), b"png", "the picture the file holds");
-        assert_eq!(c.file_of(&up.id).map(|f| f.path), Some(dir.join("Hits/01.flac").to_string_lossy().into_owned()));
+        assert_eq!(c.file_of(&crate::ItemKey::own(&up.id)).map(|f| f.path), Some(dir.join("Hits/01.flac").to_string_lossy().into_owned()));
 
         let Page::Artists { v: artists } = read(&c, Read::ArtistIndex) else { panic!() };
         assert_eq!(artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Ann", "Cy", "Di"]);

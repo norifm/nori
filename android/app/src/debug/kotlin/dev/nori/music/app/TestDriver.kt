@@ -1,5 +1,6 @@
 package dev.nori.music.app
 
+import dev.nori.music.data.key
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
@@ -31,7 +32,7 @@ fun testLyrics(song: Song): Flow<FoundLyrics>? = TestHooks.lyrics?.invoke(song)
 val traceLyrics: Boolean get() = TestHooks.traceLyrics
 
 /** The lyrics found that [now] shows for song [id], lines or none. */
-private fun shownLyrics(now: dev.nori.music.ffi.lyrics.LyricsNow, id: String?): FoundLyrics? =
+private fun shownLyrics(now: dev.nori.music.ffi.lyrics.LyricsNow, id: dev.nori.music.ffi.model.ItemKey?): FoundLyrics? =
     (now as? dev.nori.music.ffi.lyrics.LyricsNow.Shown)?.takeIf { it.song == id }?.let { FoundLyrics(it.pick.lyrics, it.pick.origin) }
 
 /** The test bridge's login, live on the logged-out screen too, where [TestDriver] is not composed. */
@@ -92,14 +93,14 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 st.order.drop(st.order.indexOf(st.index) + 1).take(8).let { up ->
                     """"upNext":"${up.joinToString(" ") { st.queue.getOrNull(it)?.id ?: "?" }}","upNextQueued":"${up.joinToString(" ") { if (it in st.queued) "1" else "0" }}","shuffle":${st.shuffle},"repeat":"${st.repeat}","""
                 } +
-                """"error":"${st.error.orEmpty()}","bridging":${st.bridging},"parkedId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().parked.orEmpty()}","songId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().current.orEmpty()}","eq":${p.eqEnabled},"limiter":${p.limiter},"hiRes":${p.hiRes},""" +
+                """"error":"${st.error.orEmpty()}","bridging":${st.bridging},"parkedId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().parked?.id.orEmpty()}","songId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().current?.id.orEmpty()}","eq":${p.eqEnabled},"limiter":${p.limiter},"hiRes":${p.hiRes},""" +
                 """"dspActive":${dev.nori.music.playback.Equalizer.inChain},"gainReductionDb":${dev.nori.music.playback.Equalizer.meterDb},"compressionDb":${dev.nori.music.playback.Equalizer.compressionDb},"soundBypass":${p.soundBypass},""" +
                 """"output":"${settings.currentOutput.value}","offload":${p.offload},"offloadWanted":${dev.nori.music.playback.PlaybackService.offloadWanted},"autoMix":"${p.autoMix}","theme":"${p.theme}",""" +
                 """"autoFill":"${p.autoFill?.name?.lowercase() ?: "off"}","scrobble":${p.servers.firstOrNull { it.id == p.activeServerId }?.scrobbleOff == false},"lyricsOnline":${p.lyricsOnline},""" +
                 """"lyricsAnswerSong":"${TestActions.lastLyrics?.first.orEmpty()}","lyricsAnswerLines":${TestActions.lastLyrics?.second?.lyrics?.lines?.size ?: 0},""" +
                 """"lyricsAnswerTiming":"${TestActions.lastLyrics?.second?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
                 // The timing of the words the player shows, whoever set it (`LyricsTiming`).
-                """"lyricsShownTiming":"${shownLyrics(player2.lyrics.value, st.current?.id)?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
+                """"lyricsShownTiming":"${shownLyrics(player2.lyrics.value, st.current?.key)?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
                 // The player answers from its own engine and output.
                 dev.nori.music.playback.PlaybackService.rustPlayer.let { r ->
                     """"engine":"rust","mixing":${r?.mixing ?: false},"offloaded":${r?.offloaded ?: false},"""
@@ -123,13 +124,13 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                     """"dac":"${d.device.orEmpty()}","bitPerfect":${d.bitPerfect},"dacModes":${d.modes.size},""" +
                         """"dacBlocked":"${d.blockedBy?.let { dev.nori.music.app.vm.dacBlockWords(context.resources, it) }.orEmpty()}","dacTrack":"${d.track?.let { dev.nori.music.app.vm.dacTrackWords(context.resources, it) }.orEmpty()}","""
                 } +
-                (TestActions.lastLyrics?.takeIf { it.first == st.current?.id }?.second ?: shownLyrics(player2.lyrics.value, st.current?.id))?.let { f ->
+                (TestActions.lastLyrics?.takeIf { it.first == st.current?.id }?.second ?: shownLyrics(player2.lyrics.value, st.current?.key))?.let { f ->
                     """"lyricsSong":"${st.current?.id.orEmpty()}","lyricLines":${f.lyrics.lines.size},"lyricsSynced":${f.lyrics.synced},""" +
                         """"lyricsWordTimed":${f.lyrics.wordTimed},"lyricsWordLines":${f.lyrics.lines.count { it.words.isNotEmpty() }},"lyricsSource":"${sourceName(f.source)}","""
                 }.orEmpty() +
                 // What the screen shows, mark included - not the snapshot the queue was painted with,
                 // which is what a favourite toggled this session no longer agrees with.
-                """"starred":${st.current?.let { actions.starMarks.value.effectiveStar(dev.nori.music.data.StarKind.SONG, it.id, it.starred) } ?: false},""" +
+                """"starred":${st.current?.let { actions.starMarks.value.effectiveStar(dev.nori.music.data.StarKind.SONG, it.key, it.starred) } ?: false},""" +
                 """"notification":"${dev.nori.music.Nori.get(context).player.sessionButtons}",""" +
                 // The app's own update: the state's kind ("Available", "UpToDate", ...) and its line in About.
                 settings.update.value.let { u ->

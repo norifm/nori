@@ -1,5 +1,6 @@
 //! Controls and queue: next/previous, seeks, failing songs, repeat and shuffle.
 
+use nori_player::key::ItemKey;
 use nori_player::playlist::{Hand, REPEAT_ALL, REPEAT_ONE};
 use nori_player::sim::{Audio, Player, Track};
 
@@ -195,7 +196,7 @@ fn stopped_song_follows_queue_edits() {
     p.tracks.broken = vec!["s1".into()];
     p.play_from(0);
     assert!(p.run_until(6_000, |p| p.stopped_at().is_some()));
-    p.queue.live.insert(0, vec!["s0".into()], Hand::No);
+    p.queue.live.insert(0, vec![ItemKey::own("s0")], Hand::No);
     p.queue_changed();
     assert_eq!(p.stopped_at(), Some(2), "play tries the failed song again");
 }
@@ -273,11 +274,11 @@ fn edits_near_current() {
     let extra = music(2.0, 200);
     p.tracks.push(track("x", &extra));
     p.tracks.push(track("y", &extra));
-    p.queue.live.add(vec!["x".into()], Hand::Next);
+    p.queue.live.add(vec![ItemKey::own("x")], Hand::Next);
     p.queue_changed();
     p.replan_ending();
     assert!(p.app.logged("the ending of s1 is made again"), "{:?}", p.app.log);
-    p.queue.live.insert(0, vec!["y".into()], Hand::No);
+    p.queue.live.insert(0, vec![ItemKey::own("y")], Hand::No);
     p.queue_changed();
     assert!(p.run_to_end(60_000));
     let heard = p.sink.heard_samples();
@@ -296,11 +297,11 @@ fn edits_near_current() {
     let extra = music(2.0, 200);
     p.tracks.push(track("x", &extra));
     // One song before the one playing, and one straight after it: every index the player holds moves.
-    p.queue.live.insert(0, vec!["y".into()], Hand::No);
+    p.queue.live.insert(0, vec![ItemKey::own("y")], Hand::No);
     p.tracks.push(track("y", &extra));
-    p.queue.live.add(vec!["x".into()], Hand::Next);
+    p.queue.live.add(vec![ItemKey::own("x")], Hand::Next);
     p.queue_changed();
-    assert_eq!(p.current_id().as_deref(), Some("s1"), "still on the song playing");
+    assert_eq!(p.current_id().map(|k| k.id).as_deref(), Some("s1"), "still on the song playing");
     assert!(p.run_to_end(60_000));
     let heard = p.sink.heard_samples();
     let joined: Vec<i16> = [&s[1], &extra, &s[2], &s[3]].iter().flat_map(|v| v.iter().copied()).collect();
@@ -315,13 +316,13 @@ fn shuffle_keeps_current_and_next() {
     p.run_for(500);
     let extra = music(2.0, 200);
     p.tracks.push(track("x", &extra));
-    p.queue.live.add(vec!["x".into()], Hand::Next);
+    p.queue.live.add(vec![ItemKey::own("x")], Hand::Next);
     p.queue.live.set_shuffle(true, 7);
     p.queue_changed();
-    let order: Vec<&str> = p.queue.live.play_order().map(|i| p.queue.live.ids()[i].as_str()).collect();
+    let order: Vec<&str> = p.queue.live.play_order().map(|i| p.queue.live.ids()[i].id.as_str()).collect();
     assert_eq!(&order[..2], &["s2", "x"], "{order:?}");
     assert!(p.next_song());
-    assert_eq!(p.current_id().as_deref(), Some("x"), "play next is next, shuffle or not");
+    assert_eq!(p.current_id().map(|k| k.id).as_deref(), Some("x"), "play next is next, shuffle or not");
 }
 
 #[test]
@@ -335,7 +336,7 @@ fn new_queue_prefetches_after_its_start() {
         p.tracks.push(track(&format!("n{k}"), n));
     }
     p.tracks.ahead.clear();
-    p.queue.live.set((0..4).map(|k| format!("n{k}")).collect(), Some(0), false, 0);
+    p.queue.live.set((0..4).map(|k| ItemKey::own(format!("n{k}"))).collect(), Some(0), false, 0);
     p.queue_changed();
     assert_eq!(p.tracks.ahead, ["n1"], "the song after the new queue's start, not after the old place clamped");
 }

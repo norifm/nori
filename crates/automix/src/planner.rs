@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 
-use nori_model::alog;
+use nori_model::{alog, ItemKey};
 use nori_player::automix::analysis::Analyzer;
 use nori_player::engine::Plan;
 use nori_player::transitions::{engine_plan, pick, whole_song, Skip, TransitionPrefs, WindowSong};
@@ -33,13 +33,13 @@ struct State {
     /// Bumped whenever anything a plan depends on changes: the window, the settings, a stored analysis.
     generation: u64,
     /// The last "no transition" answer: song, generation, and why (`None`: the planner chose gapless).
-    none: Option<(String, u64, Option<Skip>)>,
+    none: Option<(ItemKey, u64, Option<Skip>)>,
     /// The last few plans made, newest last, each told and as made (None: gapless): a jam's guests still
     /// learn the plan out of the song heard once the host's decoder has planned the next one.
     made: Vec<(TransitionNote, Option<Plan>)>,
     /// The transition another device was in the middle of when it handed its queue here, out of that
     /// song (its id): played on as it was planned there rather than planned again.
-    handed: Option<(String, Plan)>,
+    handed: Option<(ItemKey, Plan)>,
 }
 
 impl State {
@@ -54,8 +54,8 @@ impl State {
         }
     }
 
-    fn duration_of(&self, song_id: &str) -> i64 {
-        self.window.iter().find(|s| s.id == song_id).map_or(0, |s| s.duration_ms)
+    fn duration_of(&self, song_id: &ItemKey) -> i64 {
+        self.window.iter().find(|s| s.id == *song_id).map_or(0, |s| s.duration_ms)
     }
 
     fn keep(&mut self, n: TransitionNote, plan: Option<Plan>) {
@@ -67,8 +67,8 @@ impl State {
     }
 }
 
-/// One app's planner: the window and output state handed in, the plans made, over the profile's
-/// analyses and the settings `read_settings` gives.
+/// One app's planner: the window and output state handed in, the plans made, over the analyses in each
+/// song's source's rows and the settings `read_settings` gives.
 pub struct Planner {
     state: Mutex<State>,
     db: Arc<nori_db::Profile>,
@@ -100,11 +100,11 @@ impl Planner {
         self.analyses_changed();
     }
 
-    /// Song `track` as plugins refine nori's analysis of it; as it is when none does, or what one
-    /// gives doesn't hold.
-    pub fn refined(&self, track: nori_player::types::TrackAnalysis) -> nori_player::types::TrackAnalysis {
+    /// Song `song`'s `track` as plugins refine nori's analysis of it; as it is when none does, or what
+    /// one gives doesn't hold.
+    pub fn refined(&self, song: &ItemKey, track: nori_player::types::TrackAnalysis) -> nori_player::types::TrackAnalysis {
         let Some(m) = self.mixing.lock().clone() else { return track };
-        match m.refine(&track.song_id, &track).and_then(|r| refined(&track, &r)) {
+        match m.refine(song, &track).and_then(|r| refined(&track, &r)) {
             Some(t) => {
                 alog::info(&format!("analysed {}: refined by a plugin", t.song_id));
                 t
@@ -155,13 +155,13 @@ impl Planner {
     }
 
     /// The engine's question: how to mix out of `outgoing_id`, if at all.
-    pub fn plan_for(&self, outgoing_id: &str) -> Option<Plan> {
+    pub fn plan_for(&self, outgoing_id: &ItemKey) -> Option<Plan> {
         // Read without the planner locked: the settings may call into the planner under their own lock.
         let kept = (self.read_settings)();
         let mut p = self.state.lock();
         // A handed transition holds while its song is the one ending; asked for another, it is over.
         if let Some((id, plan)) = p.handed.take() {
-            if id == outgoing_id {
+            if id == *outgoing_id {
                 p.handed = Some((id, plan.clone()));
                 return Some(plan);
             }
@@ -185,7 +185,7 @@ impl Planner {
                 if !p.none.as_ref().is_some_and(|(id, _, s)| *s == Some(skip) && id == outgoing_id) {
                     alog::info(&format!("planFor: {}", skip.describe(outgoing_id)));
                 }
-                p.none = Some((outgoing_id.to_string(), generation, Some(skip)));
+                p.none = Some((outgoing_id.clone(), generation, Some(skip)));
                 return None;
             }
         };
@@ -198,14 +198,7 @@ impl Planner {
             chosen.settings.same_album_in_order = !mixes;
         }
         // Database reads happen without the planner locked.
-        let (a, b) = if prefs.auto_mix {
-            self.db.get().map_or((None, None), |db| {
-                let c = db.lock();
-                (get_with_lyrics(&c, &o.id).ok().flatten(), get_with_lyrics(&c, &n.id).ok().flatten())
-            })
-        } else {
-            (None, None)
-        };
+        let (a, b) = if prefs.auto_mix { (self.analysis(&o.id), self.analysis(&n.id)) } else { (None, None) };
         let mut t = nori_player::automix::plan::plan(a.as_ref(), b.as_ref(), o.duration_ms, n.duration_ms, &chosen.settings);
         let theirs = mixing.as_ref().and_then(|m| m.plan(&o.id, &n.id, a.as_ref(), b.as_ref(), &t));
         if let Some(p) = theirs {
@@ -218,7 +211,7 @@ impl Planner {
         let note = TransitionNote::of(&o.id, &n.id, &t, plan.is_some());
         {
             let mut p = self.state.lock();
-            p.none = plan.is_none().then(|| (outgoing_id.to_string(), generation, None));
+            p.none = plan.is_none().then(|| (outgoing_id.clone(), generation, None));
             p.keep(note, plan.clone());
         }
         if let Some(told) = &*self.planned.lock() {
@@ -240,15 +233,22 @@ impl Planner {
         plan
     }
 
+    /// Song `id`'s analysis with its lyrics' timings, from its source's rows.
+    fn analysis(&self, id: &ItemKey) -> Option<nori_player::types::TrackAnalysis> {
+        let db = self.db.rows(&id.source)?;
+        let c = db.lock();
+        get_with_lyrics(&c, &id.id).ok().flatten()
+    }
+
     /// Window songs the queue knows no length of (a YouTube feed's) take the length their analysis
     /// measured, read without the planner locked.
     fn measured_lengths(&self) {
-        let Some(db) = self.db.get() else { return };
-        let unknown: Vec<String> = self.state.lock().window.iter().filter(|s| s.duration_ms <= 0).map(|s| s.id.clone()).collect();
-        let measured: Vec<(String, i64)> = {
-            let c = db.lock();
-            unknown.into_iter().filter_map(|id| get(&c, &id).ok().flatten().map(|a| (id, a.duration_ms))).collect()
-        };
+        let unknown: Vec<ItemKey> = self.state.lock().window.iter().filter(|s| s.duration_ms <= 0).map(|s| s.id.clone()).collect();
+        let measured: Vec<(ItemKey, i64)> = unknown.into_iter().filter_map(|id| {
+            let db = self.db.rows(&id.source)?;
+            let a = get(&db.lock(), &id.id).ok().flatten()?;
+            Some((id, a.duration_ms))
+        }).collect();
         let mut p = self.state.lock();
         for s in p.window.iter_mut().filter(|s| s.duration_ms <= 0) {
             if let Some((_, ms)) = measured.iter().find(|(id, _)| *id == s.id) {
@@ -259,16 +259,16 @@ impl Planner {
 
     /// The transition out of `outgoing_id` into `incoming_id` that another device was in the middle of
     /// when it handed its queue here: the engine mixes on by it, from wherever in it the song starts.
-    pub fn handed(&self, outgoing_id: &str, incoming_id: &str, t: &TransitionPlan) {
+    pub fn handed(&self, outgoing_id: &ItemKey, incoming_id: &ItemKey, t: &TransitionPlan) {
         let plan = engine_plan(t, incoming_id);
         let mut p = self.state.lock();
         p.keep(TransitionNote::of(outgoing_id, incoming_id, t, plan.is_some()), plan.clone());
-        p.handed = plan.map(|plan| (outgoing_id.to_string(), plan));
+        p.handed = plan.map(|plan| (outgoing_id.clone(), plan));
     }
 
     /// The plan last made out of `outgoing_id`: None while none was, Some(None) when gapless.
-    pub fn made(&self, outgoing_id: &str) -> Option<Option<Plan>> {
-        self.state.lock().made.iter().rev().find(|(n, _)| n.outgoing_id == outgoing_id).map(|(_, p)| p.clone())
+    pub fn made(&self, outgoing_id: &ItemKey) -> Option<Option<Plan>> {
+        self.state.lock().made.iter().rev().find(|(n, _)| n.outgoing_id == *outgoing_id).map(|(_, p)| p.clone())
     }
 
     /// Tells `told` after each plan made, from the thread that asked for it; None stops.
@@ -277,36 +277,36 @@ impl Planner {
     }
 
     /// The last plan out of `outgoing_id`.
-    pub fn transition_note(&self, outgoing_id: &str) -> Option<TransitionNote> {
-        self.state.lock().made.iter().rev().find(|(n, _)| n.outgoing_id == outgoing_id).map(|(n, _)| n.clone())
+    pub fn transition_note(&self, outgoing_id: &ItemKey) -> Option<TransitionNote> {
+        self.state.lock().made.iter().rev().find(|(n, _)| n.outgoing_id == *outgoing_id).map(|(n, _)| n.clone())
     }
 
     /// The last plan into `incoming_id`.
-    pub fn transition_into(&self, incoming_id: &str) -> Option<TransitionNote> {
-        self.state.lock().made.iter().rev().find(|(n, _)| n.incoming_id == incoming_id).map(|(n, _)| n.clone())
+    pub fn transition_into(&self, incoming_id: &ItemKey) -> Option<TransitionNote> {
+        self.state.lock().made.iter().rev().find(|(n, _)| n.incoming_id == *incoming_id).map(|(n, _)| n.clone())
     }
 
     /// Whether `song_id` should be measured as it plays, and its length in ms (0 unknown) to size the measurement.
-    pub fn wants_analysis(&self, song_id: &str) -> Option<u64> {
+    pub fn wants_analysis(&self, song_id: &ItemKey) -> Option<u64> {
         let duration = self.state.lock().duration_of(song_id).max(0) as u64;
-        if !self.measures() || !nori_model::analysable(song_id) {
+        if !self.measures() || !nori_model::analysable(&song_id.id) {
             return None;
         }
-        let db = self.db.get()?;
-        let wanted = missing(&db.lock(), &[song_id.to_string()]).is_ok_and(|m| !m.is_empty());
+        let db = self.db.rows(&song_id.source)?;
+        let wanted = missing(&db.lock(), std::slice::from_ref(&song_id.id)).is_ok_and(|m| !m.is_empty());
         wanted.then_some(duration)
     }
 
     /// Whether `song_id` may yet be measured as it plays: it is in the window and wants measuring.
-    pub fn may_measure(&self, song_id: &str) -> bool {
-        let in_window = self.state.lock().window.iter().any(|s| s.id == song_id);
+    pub fn may_measure(&self, song_id: &ItemKey) -> bool {
+        let in_window = self.state.lock().window.iter().any(|s| s.id == *song_id);
         in_window && self.wants_analysis(song_id).is_some()
     }
 
     /// The engine heard `song_id` from its first sample to its last. Finished on the planner's thread,
     /// which ends with the planner.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn analysed(self: &Arc<Self>, song_id: &str, analyzer: Analyzer, frames: u64, rate: u32) {
+    pub fn analysed(self: &Arc<Self>, song_id: &ItemKey, analyzer: Analyzer, frames: u64, rate: u32) {
         let worker = self.worker.get_or_init(|| {
             let (tx, rx) = std::sync::mpsc::channel::<Finished>();
             let me: std::sync::Weak<Planner> = Arc::downgrade(self);
@@ -316,13 +316,13 @@ impl Planner {
                 .expect("the analysis thread starts");
             Mutex::new(tx)
         });
-        let _ = worker.lock().send(Finished { song_id: song_id.to_string(), analyzer, frames, rate });
+        let _ = worker.lock().send(Finished { song_id: song_id.clone(), analyzer, frames, rate });
     }
 
     /// The web has no threads: there the measurement is finished at once, between the engine's turns.
     #[cfg(target_arch = "wasm32")]
-    pub fn analysed(self: &Arc<Self>, song_id: &str, analyzer: Analyzer, frames: u64, rate: u32) {
-        self.finish(Finished { song_id: song_id.to_string(), analyzer, frames, rate });
+    pub fn analysed(self: &Arc<Self>, song_id: &ItemKey, analyzer: Analyzer, frames: u64, rate: u32) {
+        self.finish(Finished { song_id: song_id.clone(), analyzer, frames, rate });
     }
 
     fn finish(&self, mut f: Finished) {
@@ -334,12 +334,12 @@ impl Planner {
             return;
         }
         let features = f.analyzer.take_features();
-        let Some(db) = self.db.get() else {
+        let Some(db) = self.db.rows(&f.song_id.source) else {
             alog::info(&format!("analysed {}: not stored: no database", f.song_id));
             return;
         };
-        let (track, curve) = super::store::measure(&f.song_id, &features);
-        let track = self.refined(track);
+        let (track, curve) = super::store::measure(&f.song_id.id, &features);
+        let track = self.refined(&f.song_id, track);
         let stored = super::store::put_finished(&db.lock(), track, &curve);
         let a = match stored {
             Ok(a) => a,
@@ -368,8 +368,8 @@ impl Planner {
 /// gapless), the incoming speed, and the reason.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TransitionNote {
-    pub outgoing_id: String,
-    pub incoming_id: String,
+    pub outgoing_id: ItemKey,
+    pub incoming_id: ItemKey,
     pub kind: TransitionKind,
     pub start_ms: i64,
     pub duration_ms: i64,
@@ -379,10 +379,10 @@ pub struct TransitionNote {
 
 impl TransitionNote {
     /// What is told of transition `t` out of `outgoing_id` into `incoming_id`; gapless without an engine plan.
-    fn of(outgoing_id: &str, incoming_id: &str, t: &TransitionPlan, mixed: bool) -> TransitionNote {
+    fn of(outgoing_id: &ItemKey, incoming_id: &ItemKey, t: &TransitionPlan, mixed: bool) -> TransitionNote {
         TransitionNote {
-            outgoing_id: outgoing_id.to_string(),
-            incoming_id: incoming_id.to_string(),
+            outgoing_id: outgoing_id.clone(),
+            incoming_id: incoming_id.clone(),
             kind: if mixed { t.kind } else { TransitionKind::Gapless },
             start_ms: t.out_start_ms,
             duration_ms: if mixed { t.duration_ms } else { 0 },
@@ -405,7 +405,7 @@ fn screaming_snake(camel: &str) -> String {
 }
 
 struct Finished {
-    song_id: String,
+    song_id: ItemKey,
     analyzer: Analyzer,
     frames: u64,
     rate: u32,
@@ -415,8 +415,12 @@ struct Finished {
 mod tests {
     use super::*;
 
+    fn k(id: &str) -> ItemKey {
+        ItemKey::own(id)
+    }
+
     fn n(out: &str, inc: &str) -> TransitionNote {
-        TransitionNote { outgoing_id: out.into(), incoming_id: inc.into(), kind: TransitionKind::BeatMatched, start_ms: 1, duration_ms: 8000, tempo_ratio: 1.0, reason: String::new() }
+        TransitionNote { outgoing_id: k(out), incoming_id: k(inc), kind: TransitionKind::BeatMatched, start_ms: 1, duration_ms: 8000, tempo_ratio: 1.0, reason: String::new() }
     }
 
     #[test]
@@ -433,7 +437,7 @@ mod tests {
         let mut analyzer = Analyzer::new(s.rate, 60_000);
         let pcm = s.render();
         analyzer.feed(&pcm);
-        planner.finish(Finished { song_id: "s".into(), analyzer, frames: pcm.len() as u64, rate: s.rate });
+        planner.finish(Finished { song_id: k("s"), analyzer, frames: pcm.len() as u64, rate: s.rate });
         let kept = get(&db.lock(), "s").unwrap().unwrap();
         assert_eq!((kept.intro_grid_source, kept.intro_bpm), (GRID_NEURAL, 90.0));
         assert!(super::super::store::get_voice(&db.lock(), "s").unwrap().is_some());
@@ -445,13 +449,33 @@ mod tests {
         let profile = Arc::new(nori_db::Profile::default());
         profile.set(&db);
         let planner = Planner::new(profile, Box::new(|| Some(TransitionPrefs { auto_mix: true, ..nori_player::sim::prefs_off() })));
-        assert_eq!(planner.wants_analysis("s"), Some(0), "a library song, its length unknown");
-        assert_eq!(planner.wants_analysis("ext-2"), Some(0), "a provider's song, from the bytes it plays");
-        assert_eq!(planner.wants_analysis("radio:1"), None, "a station's stream never ends");
+        assert_eq!(planner.wants_analysis(&k("s")), Some(0), "a library song, its length unknown");
+        assert_eq!(planner.wants_analysis(&k("ext-2")), Some(0), "a provider's song, from the bytes it plays");
+        assert_eq!(planner.wants_analysis(&k("radio:1")), None, "a station's stream never ends");
+    }
+
+    /// One id in two sources is two songs: each is read and stored in its own source's rows.
+    #[test]
+    fn analyses_stay_in_their_sources_rows() {
+        use nori_player::automix::synth::Synth;
+        let (own, other) = (Arc::new(Mutex::new(nori_db::open("", "home").unwrap())), Arc::new(Mutex::new(nori_db::open("", "nd2").unwrap())));
+        let (profile, source) = (Arc::new(nori_db::Profile::default()), nori_db::Profile::default());
+        profile.set(&own);
+        source.set(&other);
+        profile.source_opened("nd2".into(), &source);
+        let planner = Planner::new(profile, Box::new(|| None));
+        let theirs = |id: &str| ItemKey { source: Some("nd2".into()), id: id.into() };
+        let s = Synth { secs: 60.0, ..Synth::new(120.0) };
+        let mut analyzer = Analyzer::new(s.rate, 60_000);
+        let pcm = s.render();
+        analyzer.feed(&pcm);
+        planner.finish(Finished { song_id: theirs("s"), analyzer, frames: pcm.len() as u64, rate: s.rate });
+        assert!(get(&other.lock(), "s").unwrap().is_some() && get(&own.lock(), "s").unwrap().is_none());
+        assert_eq!((planner.wants_analysis(&k("s")), planner.wants_analysis(&theirs("s"))), (Some(0), None));
     }
 
     fn song(id: &str, duration_ms: i64) -> WindowSong {
-        WindowSong { id: id.into(), duration_ms, ..WindowSong::default() }
+        WindowSong { id: k(id), duration_ms, ..WindowSong::default() }
     }
 
     /// A planner over an empty database whose crossfade length the test sets (0: off).
@@ -468,26 +492,26 @@ mod tests {
     #[test]
     fn a_cached_no_follows_what_it_depends_on() {
         let (planner, crossfade, _db) = crossfading();
-        assert!(planner.plan_for("a").is_none(), "an empty window");
+        assert!(planner.plan_for(&k("a")).is_none(), "an empty window");
         planner.transition_window(vec![song("a", 200_000), song("b", 200_000)], false);
-        assert!(planner.plan_for("a").is_some(), "a new window");
-        let note = planner.transition_note("a").unwrap();
-        assert_eq!((note.incoming_id.as_str(), note.kind, note.duration_ms), ("b", TransitionKind::EqualPowerFade, 6000));
-        assert_eq!(planner.transition_into("b"), Some(note));
-        assert_eq!(planner.transition_into("a"), None);
+        assert!(planner.plan_for(&k("a")).is_some(), "a new window");
+        let note = planner.transition_note(&k("a")).unwrap();
+        assert_eq!((note.incoming_id.id.as_str(), note.kind, note.duration_ms), ("b", TransitionKind::EqualPowerFade, 6000));
+        assert_eq!(planner.transition_into(&k("b")), Some(note));
+        assert_eq!(planner.transition_into(&k("a")), None);
 
         planner.transition_setup(true);
         assert!(planner.transitions_off());
-        assert!(planner.plan_for("a").is_none(), "the output forbids it");
+        assert!(planner.plan_for(&k("a")).is_none(), "the output forbids it");
         planner.transition_setup(false);
         assert!(!planner.transitions_off());
-        assert!(planner.plan_for("a").is_some(), "the output allows it again");
+        assert!(planner.plan_for(&k("a")).is_some(), "the output allows it again");
 
         *crossfade.lock() = 0;
-        assert!(planner.plan_for("a").is_none(), "crossfade off");
+        assert!(planner.plan_for(&k("a")).is_none(), "crossfade off");
         *crossfade.lock() = 4;
-        assert!(planner.plan_for("a").is_some(), "crossfade on again");
-        assert_eq!(planner.transition_note("a").unwrap().duration_ms, 4000);
+        assert!(planner.plan_for(&k("a")).is_some(), "crossfade on again");
+        assert_eq!(planner.transition_note(&k("a")).unwrap().duration_ms, 4000);
     }
 
     #[test]
@@ -499,15 +523,15 @@ mod tests {
         let made = Arc::new(Mutex::new(0));
         let count = made.clone();
         planner.on_plan(Some(Box::new(move || *count.lock() += 1)));
-        let track = |id: &str, track| WindowSong { album_id: Some("x".into()), track, ..song(id, 200_000) };
+        let track = |id: &str, track| WindowSong { album_id: Some(k("x")), track, ..song(id, 200_000) };
         let window = || vec![track("a", 1), track("b", 2)];
         planner.transition_window(window(), false);
-        assert!(planner.plan_for("a").is_none(), "same album in order: gapless");
+        assert!(planner.plan_for(&k("a")).is_none(), "same album in order: gapless");
         planner.transition_window(window(), false);
-        assert!(planner.plan_for("a").is_none());
+        assert!(planner.plan_for(&k("a")).is_none());
         assert_eq!(*made.lock(), 1, "planned once");
         planner.transition_window(vec![track("a", 1), track("c", 2)], false);
-        assert!(planner.plan_for("a").is_none());
+        assert!(planner.plan_for(&k("a")).is_none());
         assert_eq!(*made.lock(), 2, "another window is planned again");
     }
 
@@ -518,12 +542,12 @@ mod tests {
     fn the_plan_out_of_the_song_heard_outlives_the_next_ones() {
         let (planner, _, _db) = crossfading();
         planner.transition_window(vec![song("a", 200_000), song("b", 200_000), song("c", 200_000)], false);
-        let a = planner.plan_for("a").expect("a plan out of a");
+        let a = planner.plan_for(&k("a")).expect("a plan out of a");
         planner.transition_window(vec![song("a", 200_000), song("b", 200_000), song("c", 200_000)], false);
-        assert!(planner.plan_for("b").is_some());
-        assert_eq!(planner.made("a"), Some(Some(a)), "still known");
-        assert!(planner.made("b").is_some_and(|p| p.is_some_and(|p| p.incoming_id == "c")));
-        assert_eq!(planner.made("c"), None, "not planned");
+        assert!(planner.plan_for(&k("b")).is_some());
+        assert_eq!(planner.made(&k("a")), Some(Some(a)), "still known");
+        assert!(planner.made(&k("b")).is_some_and(|p| p.is_some_and(|p| p.incoming_id.id == "c")));
+        assert_eq!(planner.made(&k("c")), None, "not planned");
     }
 
     #[test]
@@ -531,12 +555,12 @@ mod tests {
         let (planner, crossfade, _db) = crossfading();
         *crossfade.lock() = 0;
         planner.transition_window(vec![song("a", 200_000), song("b", 180_000)], false);
-        assert!(planner.plan_for("a").is_none(), "no transition with AutoMix and crossfade off");
-        assert_eq!(planner.wants_analysis("b"), Some(180_000), "sized by the window");
-        assert!(planner.may_measure("b"));
+        assert!(planner.plan_for(&k("a")).is_none(), "no transition with AutoMix and crossfade off");
+        assert_eq!(planner.wants_analysis(&k("b")), Some(180_000), "sized by the window");
+        assert!(planner.may_measure(&k("b")));
         planner.set_measures(false);
-        assert_eq!(planner.wants_analysis("b"), None, "a profile that measures nothing");
-        assert!(!planner.may_measure("b"));
+        assert_eq!(planner.wants_analysis(&k("b")), None, "a profile that measures nothing");
+        assert!(!planner.may_measure(&k("b")));
     }
 
     /// Only a song heard whole, and at least 30 s of it, is stored.
@@ -550,7 +574,7 @@ mod tests {
             let mut analyzer = Analyzer::new(s.rate, 60_000);
             let pcm = s.render();
             analyzer.feed(&pcm);
-            planner.finish(Finished { song_id: "s".into(), analyzer, frames: pcm.len() as u64, rate: s.rate });
+            planner.finish(Finished { song_id: k("s"), analyzer, frames: pcm.len() as u64, rate: s.rate });
             assert_eq!(get(&db.lock(), "s").unwrap().is_some(), stored, "{secs} s heard of {window_ms} ms");
         }
     }
@@ -564,17 +588,17 @@ mod tests {
         profile.set(&db);
         let planner = Planner::new(profile, Box::new(|| Some(TransitionPrefs { auto_mix: true, ..nori_player::sim::prefs_off() })));
         planner.transition_window(vec![song("a", 0), song("b", 0)], false);
-        assert!(planner.plan_for("a").is_none(), "nothing measured yet");
+        assert!(planner.plan_for(&k("a")).is_none(), "nothing measured yet");
         for id in ["a", "b"] {
             let s = Synth { secs: 60.0, ..Synth::new(120.0) };
             let mut analyzer = Analyzer::new(s.rate, 60_000);
             let pcm = s.render();
             analyzer.feed(&pcm);
-            planner.finish(Finished { song_id: id.into(), analyzer, frames: pcm.len() as u64, rate: s.rate });
+            planner.finish(Finished { song_id: k(id), analyzer, frames: pcm.len() as u64, rate: s.rate });
         }
-        let plan = planner.plan_for("a").expect("a mix from the measured lengths");
-        assert_eq!(plan.incoming_id, "b");
-        let note = planner.transition_note("a").unwrap();
+        let plan = planner.plan_for(&k("a")).expect("a mix from the measured lengths");
+        assert_eq!(plan.incoming_id, k("b"));
+        let note = planner.transition_note(&k("a")).unwrap();
         assert!((40_000..60_000).contains(&note.start_ms), "{note:?}");
     }
 
@@ -588,7 +612,7 @@ mod tests {
             p.keep(n(&format!("x{i}"), "y"), None);
         }
         assert_eq!(p.made.len(), NOTES_KEPT);
-        assert_eq!(p.made.last().unwrap().0.outgoing_id, "x7");
+        assert_eq!(p.made.last().unwrap().0.outgoing_id.id, "x7");
 
         // Kind names log as screaming snake.
         assert_eq!(screaming_snake("BeatMatched"), "BEAT_MATCHED");

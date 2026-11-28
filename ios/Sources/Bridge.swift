@@ -4,6 +4,20 @@ import UIKit
 struct Item {
     let kind: String
     let id: String
+    /// A song's source and id as one text (`key`): what tells it apart in the queue and the player.
+    let key: String
+    /// What names the item to the library: its id, with where it is kept when that is not the profile's
+    /// own source (`ref`).
+    let ref: String
+    /// The name of the source a playlist is kept in, in a profile of several sources (`on`).
+    let on: String
+    /// Its source's circle, where the library marks it beside a look-alike of another source (`mark`).
+    let mark: Mark?
+
+    struct Mark {
+        let icon: ProfileIcon
+        let letter: String
+    }
     let title: String
     let subtitle: String
     let cover: String
@@ -34,6 +48,12 @@ struct Item {
         covers = d["covers"] as? [String] ?? []
         kind = d["k"] as? String ?? ""
         id = d["id"] as? String ?? ""
+        key = d["key"] as? String ?? id
+        ref = d["ref"] as? String ?? id
+        on = d["on"] as? String ?? ""
+        mark = (d["mark"] as? [String: Any]).flatMap { m in
+            (m["icon"] as? String).flatMap(ProfileIcon.init(rawValue:)).map { Mark(icon: $0, letter: m["letter"] as? String ?? "") }
+        }
         title = d["t"] as? String ?? ""
         cover = d["c"] as? String ?? ""
         seconds = d["d"] as? Int ?? 0
@@ -286,12 +306,12 @@ final class Core {
 
     /// Whether the item shows starred: the session's word over its record.
     func isFavorite(_ item: Item) -> Bool {
-        item.id.withCString { nori_ios_starred(starKind(item), $0, item.starred ? 1 : 0) } != 0
+        item.ref.withCString { nori_ios_starred(starKind(item), $0, item.starred ? 1 : 0) } != 0
     }
 
     /// Hearts (or un-hearts) a song, album or artist; the hearts are drawn again once it is marked.
     func favorite(_ item: Item, _ on: Bool) {
-        item.id.withCString { nori_ios_star(starKind(item), $0, on ? 1 : 0) }
+        item.ref.withCString { nori_ios_star(starKind(item), $0, on ? 1 : 0) }
     }
 
     func start(in window: UIWindow) {

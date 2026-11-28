@@ -115,3 +115,8 @@ fn opening_places_the_beat_model() {
     let _core = Core::new(db.to_string_lossy().into(), "t".into(), session.clone()).unwrap();
     assert_eq!(session.settings.model.dir(), Some(dir.path().join("models")));
 }
+
+/// Keys of the profile's own songs `ids`.
+pub(crate) fn keys(ids: &[&str]) -> Vec<crate::ItemKey> {
+    ids.iter().map(|id| crate::ItemKey::own(*id)).collect()
+}

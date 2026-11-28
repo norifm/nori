@@ -2,16 +2,18 @@
 //! planner's answer (`automix::plan`) into the engine's [`Plan`].
 
 use crate::engine::Plan;
+use crate::key::ItemKey;
 use crate::types::{AutoMixSettings, MixStyle, TransitionKind, TransitionPlan};
 
 /// A song in the planner's window.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WindowSong {
-    pub id: String,
+    pub id: ItemKey,
     /// For the log only.
     pub title: String,
     pub duration_ms: i64,
-    pub album_id: Option<String>,
+    /// The album, as its source tells it apart.
+    pub album_id: Option<ItemKey>,
     pub disc: i32,
     pub track: i32,
     /// Server BPM tag, 0 when none.
@@ -86,7 +88,7 @@ pub enum Skip {
 }
 
 impl Skip {
-    pub fn describe(&self, outgoing_id: &str) -> String {
+    pub fn describe(&self, outgoing_id: &ItemKey) -> String {
         match *self {
             Skip::Off { transitions_off, auto_mix, crossfade_s } => format!("off (transitionsOff={transitions_off} autoMix={auto_mix} crossfadeSec={crossfade_s})"),
             Skip::NotInWindow => format!("{outgoing_id} not in the upcoming window"),
@@ -99,12 +101,12 @@ impl Skip {
 
 /// The pair and planner settings for mixing out of `outgoing_id`, given the play-order `window`
 /// (previous song first).
-pub fn pick(prefs: &TransitionPrefs, transitions_off: bool, window: &[WindowSong], outgoing_id: &str, shuffling: bool) -> Result<Pick, Skip> {
+pub fn pick(prefs: &TransitionPrefs, transitions_off: bool, window: &[WindowSong], outgoing_id: &ItemKey, shuffling: bool) -> Result<Pick, Skip> {
     if transitions_off || (!prefs.auto_mix && prefs.crossfade_s == 0) {
         return Err(Skip::Off { transitions_off, auto_mix: prefs.auto_mix, crossfade_s: prefs.crossfade_s });
     }
     // The previous song is in the window because decoding runs ahead: its ending may still be flowing.
-    let out = window.iter().position(|s| s.id == outgoing_id).ok_or(Skip::NotInWindow)?;
+    let out = window.iter().position(|s| s.id == *outgoing_id).ok_or(Skip::NotInWindow)?;
     let next = out + 1;
     let (o, n) = (&window[out], window.get(next).ok_or(Skip::NothingAfter)?);
     if o.radio || n.radio {
@@ -131,11 +133,11 @@ pub fn pick(prefs: &TransitionPrefs, transitions_off: bool, window: &[WindowSong
 }
 
 /// The engine plan for a planner answer; `None` for gapless.
-pub fn engine_plan(p: &TransitionPlan, incoming_id: &str) -> Option<Plan> {
+pub fn engine_plan(p: &TransitionPlan, incoming_id: &ItemKey) -> Option<Plan> {
     if p.kind == TransitionKind::Gapless {
         return None;
     }
-    Some(Plan { incoming_id: incoming_id.to_string(), mixer: p.clone() })
+    Some(Plan { incoming_id: incoming_id.clone(), mixer: p.clone() })
 }
 
 /// An analysis of `heard_ms` covers the whole `expected_ms` song (0: unknown). A cut-short analysis must
@@ -168,43 +170,43 @@ mod tests {
     }
 
     fn song(id: &str, album: Option<&str>, track: i32) -> WindowSong {
-        WindowSong { id: id.into(), title: id.into(), duration_ms: 200_000, album_id: album.map(Into::into), disc: 1, track, tag_bpm: 0.0, radio: false }
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: 200_000, album_id: album.map(ItemKey::own), disc: 1, track, tag_bpm: 0.0, radio: false }
     }
 
     #[test]
     fn what_is_not_mixed() {
         let w = [song("a", None, 1), song("b", None, 2)];
-        assert!(pick(&TransitionPrefs { auto_mix: false, ..prefs() }, false, &w, "a", false).is_err());
-        assert!(pick(&prefs(), true, &w, "a", false).is_err(), "the output forbids touching samples");
-        assert!(pick(&TransitionPrefs { auto_mix: false, crossfade_s: 4, ..prefs() }, false, &w, "a", false).is_ok());
+        assert!(pick(&TransitionPrefs { auto_mix: false, ..prefs() }, false, &w, &ItemKey::own("a"), false).is_err());
+        assert!(pick(&prefs(), true, &w, &ItemKey::own("a"), false).is_err(), "the output forbids touching samples");
+        assert!(pick(&TransitionPrefs { auto_mix: false, crossfade_s: 4, ..prefs() }, false, &w, &ItemKey::own("a"), false).is_ok());
 
         // Radio and unknown lengths not mixed.
         let mut w = [song("a", None, 1), song("b", None, 2)];
         w[1].radio = true;
-        assert_eq!(pick(&prefs(), false, &w, "a", false).unwrap_err(), Skip::Radio);
+        assert_eq!(pick(&prefs(), false, &w, &ItemKey::own("a"), false).unwrap_err(), Skip::Radio);
         w[1].radio = false;
         w[0].duration_ms = 0;
-        assert_eq!(pick(&prefs(), false, &w, "a", false).unwrap_err(), Skip::Durations(0, 200_000));
+        assert_eq!(pick(&prefs(), false, &w, &ItemKey::own("a"), false).unwrap_err(), Skip::Durations(0, 200_000));
     }
 
     #[test]
     fn pair_is_outgoing_and_next() {
         let w = [song("before", None, 1), song("a", None, 1), song("b", None, 1)];
-        let p = pick(&prefs(), false, &w, "a", false).unwrap();
+        let p = pick(&prefs(), false, &w, &ItemKey::own("a"), false).unwrap();
         assert_eq!((p.out, p.next), (1, 2));
-        let p = pick(&prefs(), false, &w, "before", false).unwrap();
+        let p = pick(&prefs(), false, &w, &ItemKey::own("before"), false).unwrap();
         assert_eq!((p.out, p.next), (0, 1));
-        assert_eq!(pick(&prefs(), false, &w, "b", false).unwrap_err(), Skip::NothingAfter);
-        assert_eq!(pick(&prefs(), false, &w, "x", false).unwrap_err(), Skip::NotInWindow);
+        assert_eq!(pick(&prefs(), false, &w, &ItemKey::own("b"), false).unwrap_err(), Skip::NothingAfter);
+        assert_eq!(pick(&prefs(), false, &w, &ItemKey::own("x"), false).unwrap_err(), Skip::NotInWindow);
     }
 
     #[test]
     fn album_order() {
         let w = [song("a", Some("x"), 3), song("b", Some("x"), 4)];
-        assert!(!pick(&TransitionPrefs { keep_albums: false, ..prefs() }, false, &w, "a", false).unwrap().settings.same_album_in_order);
+        assert!(!pick(&TransitionPrefs { keep_albums: false, ..prefs() }, false, &w, &ItemKey::own("a"), false).unwrap().settings.same_album_in_order);
         assert!(in_album_order(None, &w[0], Some(&w[1]), false) && in_album_order(Some(&w[0]), &w[1], None, false));
         assert!(!in_album_order(None, &song("c", None, 1), None, false));
-        let in_order = |a: WindowSong, b: WindowSong| pick(&prefs(), false, &[a, b], "a", false).unwrap().settings.same_album_in_order;
+        let in_order = |a: WindowSong, b: WindowSong| pick(&prefs(), false, &[a, b], &ItemKey::own("a"), false).unwrap().settings.same_album_in_order;
         let tagged = |id: &str, disc: i32, track: i32| WindowSong { disc, ..song(id, Some("x"), track) };
         assert!(in_order(tagged("a", 1, 3), tagged("b", 1, 4)));
         assert!(in_order(tagged("a", 1, 2), tagged("b", 1, 4)), "a track left out");
@@ -226,8 +228,10 @@ mod tests {
         assert!(!in_order(tagged("a", 1, 7), tagged("b", 1, 3)), "back to an earlier track");
         assert!(!in_order(tagged("a", 0, 7), tagged("b", 0, 3)), "back to an earlier track, no discs");
         assert!(in_order(tagged("a", 1, 7), tagged("b", 1, 7)), "the same number twice is not going back");
-        assert!(!in_order(tagged("a", 1, 0), WindowSong { album_id: Some("y".into()), ..tagged("b", 1, 0) }), "another album");
-        assert!(!pick(&prefs(), false, &[tagged("a", 1, 0), tagged("b", 1, 0)], "a", true).unwrap().settings.same_album_in_order, "shuffled");
+        assert!(!in_order(tagged("a", 1, 0), WindowSong { album_id: Some(ItemKey::own("y")), ..tagged("b", 1, 0) }), "another album");
+        let elsewhere = Some(ItemKey { source: Some("nd2".into()), id: "x".into() });
+        assert!(!in_order(tagged("a", 1, 3), WindowSong { album_id: elsewhere, ..tagged("b", 1, 4) }), "the same album id in another source");
+        assert!(!pick(&prefs(), false, &[tagged("a", 1, 0), tagged("b", 1, 0)], &ItemKey::own("a"), true).unwrap().settings.same_album_in_order, "shuffled");
         assert!(!in_order(tagged("a", 1, 12), tagged("b", 1, 1)), "the album queued twice: its end and its start again");
         assert!(!in_album_order(Some(&tagged("p", 1, 5)), &tagged("c", 1, 2), Some(&tagged("n", 1, 1)), false), "ReplayGain's album gain likewise");
         assert!(in_album_order(Some(&tagged("p", 1, 1)), &tagged("c", 1, 2), None, false));
@@ -236,10 +240,10 @@ mod tests {
     #[test]
     fn plain_crossfade() {
         let w = [song("a", None, 1), song("b", None, 2)];
-        let s = pick(&TransitionPrefs { auto_mix: false, crossfade_s: 5, ..prefs() }, false, &w, "a", false).unwrap().settings;
+        let s = pick(&TransitionPrefs { auto_mix: false, crossfade_s: 5, ..prefs() }, false, &w, &ItemKey::own("a"), false).unwrap().settings;
         assert_eq!(s.max_transition_s, 5.0);
         assert!(!s.beat_match && !s.bass_swap && !s.filter_effects && !s.match_loudness);
-        let s = pick(&TransitionPrefs { replay_gain: true, ..prefs() }, false, &w, "a", false).unwrap().settings;
+        let s = pick(&TransitionPrefs { replay_gain: true, ..prefs() }, false, &w, &ItemKey::own("a"), false).unwrap().settings;
         assert!(!s.match_loudness, "replaygain already levels them");
 
     }

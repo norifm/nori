@@ -7,6 +7,7 @@
 //! the FFI (Android).
 
 use crate::library::{offer_stands, QueueOffer};
+use nori_model::ItemKey;
 
 /// The offer Home shows, if any.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -21,7 +22,7 @@ impl Offered {
 
     /// A look's answer, with what the player shows now (`here`, `playing`): it replaces the offer shown,
     /// and is shown only while it stands. The offer shown after it.
-    pub fn found(&mut self, offer: Option<QueueOffer>, here: Option<String>, playing: bool) -> Option<&QueueOffer> {
+    pub fn found(&mut self, offer: Option<QueueOffer>, here: Option<ItemKey>, playing: bool) -> Option<&QueueOffer> {
         self.offer = offer;
         self.still(here, playing);
         self.offer.as_ref()
@@ -29,8 +30,8 @@ impl Offered {
 
     /// The player shows `here` and is `playing` or not: an offer that no longer stands (music started,
     /// or the player came to show its song) is let go. Whether one is still shown.
-    pub fn still(&mut self, here: Option<String>, playing: bool) -> bool {
-        let stands = self.offer.as_ref().is_some_and(|o| o.songs.get(o.index as usize).is_some_and(|s| offer_stands(&s.id, here, playing)));
+    pub fn still(&mut self, here: Option<ItemKey>, playing: bool) -> bool {
+        let stands = self.offer.as_ref().is_some_and(|o| o.songs.get(o.index as usize).is_some_and(|s| offer_stands(&s.id, here.as_ref(), playing)));
         if !stands {
             self.offer = None;
         }
@@ -62,12 +63,12 @@ impl HomeOffer {
     }
 
     /// [`Offered::found`]: whether `offer` is shown.
-    pub fn found(&self, offer: Option<QueueOffer>, here: Option<String>, playing: bool) -> bool {
+    pub fn found(&self, offer: Option<QueueOffer>, here: Option<ItemKey>, playing: bool) -> bool {
         self.offered().found(offer, here, playing).is_some()
     }
 
     /// [`Offered::still`].
-    pub fn still(&self, here: Option<String>, playing: bool) -> bool {
+    pub fn still(&self, here: Option<ItemKey>, playing: bool) -> bool {
         self.offered().still(here, playing)
     }
 
@@ -99,11 +100,12 @@ mod tests {
     fn an_offer_is_shown_while_it_stands() {
         let mut o = Offered::default();
         assert_eq!(o.found(Some(offer("b")), None, false), Some(&offer("b")));
-        assert!(o.still(Some("a".into()), false), "the player shows another song, paused");
-        assert!(!o.still(Some("a".into()), true), "music started");
+        assert!(o.still(Some(ItemKey::own("a")), false), "the player shows another song, paused");
+        assert!(o.still(Some(ItemKey { source: Some("acct2".into()), id: "b".into() }), false), "another source's b, paused");
+        assert!(!o.still(Some(ItemKey::own("a")), true), "music started");
         assert_eq!(o.shown(), None);
         assert!(!o.still(None, false), "a let go offer does not come back");
-        assert_eq!(o.found(Some(offer("b")), Some("b".into()), false), None, "the player shows its song as the answer comes");
+        assert_eq!(o.found(Some(offer("b")), Some(ItemKey::own("b")), false), None, "the player shows its song as the answer comes");
     }
 
     #[test]

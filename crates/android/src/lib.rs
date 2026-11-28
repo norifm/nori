@@ -190,6 +190,17 @@ pub(crate) fn with_str<R>(env: &JNIEnv, s: &JString, f: impl FnOnce(&str) -> R) 
     Some(f(&v))
 }
 
+/// `f` given the item key Kotlin passes as its source (null: the profile's own) and its id.
+pub(crate) fn with_key<R>(env: &JNIEnv, source: &JString, id: &JString, f: impl FnOnce(&nori_core::ItemKey) -> R) -> Option<R> {
+    let source = string(env, source);
+    with_str(env, id, |id| f(&nori_core::ItemKey { source, id: id.to_string() }))
+}
+
+/// The item key whose text ([`nori_core::ItemKey::text`]) Kotlin passes: a player's item id, a download's.
+pub(crate) fn key_of_text(env: &JNIEnv, text: &JString) -> Option<nori_core::ItemKey> {
+    with_str(env, text, nori_core::ItemKey::from_text)
+}
+
 pub(crate) fn string(env: &JNIEnv, s: &JString) -> Option<String> {
     with_str(env, s, str::to_string)
 }

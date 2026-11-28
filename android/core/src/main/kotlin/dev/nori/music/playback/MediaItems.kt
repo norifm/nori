@@ -4,11 +4,15 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import dev.nori.music.data.key
 import dev.nori.music.ffi.queue.Hand
 import dev.nori.music.ffi.model.OriginKind
 import dev.nori.music.ffi.model.PageOrigin
 import dev.nori.music.ffi.model.RadioStation
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.model.Song
+import dev.nori.music.ffi.model.itemKeyTexts
+import dev.nori.music.ffi.model.itemKeysOf
 
 /**
  * The artwork size asked for on the lock screen and in the notification. The same number the
@@ -18,20 +22,24 @@ import dev.nori.music.ffi.model.Song
 const val NOTIFICATION_ART = 800
 
 
-/** Audio is addressed as nori://song/<id>; the real URL is decided when the bytes are needed. */
+/** Audio is addressed as nori://song/<media id>; the real URL is decided when the bytes are needed. */
 const val SONG_SCHEME = "nori"
 
 fun songUri(id: String): Uri = Uri.Builder().scheme(SONG_SCHEME).authority("song").appendPath(id).build()
 
+/** The keys of songs' items, from their media ids (the core's `ItemKey::text`). */
+fun List<MediaItem>.keys(): List<ItemKey> = itemKeysOf(map { it.mediaId })
+val MediaItem.key: ItemKey get() = itemKeysOf(listOf(mediaId)).single()
+
 /**
- * What the player itself carries for a song: its id, and what the system's notification and lock screen
- * show. Everything else about it (ReplayGain, the transition planner's window, the queue as the app
- * lists it, the queue saved for next time) the core keeps by id - see [toMediaItems], which hands the
- * songs to it, and crates/queue/src/queue.rs.
+ * What the player itself carries for a song: its key as text ([mediaId]), and what the system's
+ * notification and lock screen show. Everything else about it (ReplayGain, the transition planner's
+ * window, the queue as the app lists it, the queue saved for next time) the core keeps by key - see
+ * [toMediaItems], which hands the songs to it, and crates/queue/src/queue.rs.
  */
-fun Song.toMediaItem(coverUrl: String?): MediaItem = MediaItem.Builder()
-    .setMediaId(id)
-    .setUri(songUri(id))
+private fun Song.toMediaItem(mediaId: String, coverUrl: String?): MediaItem = MediaItem.Builder()
+    .setMediaId(mediaId)
+    .setUri(songUri(mediaId))
     .setMediaMetadata(
         MediaMetadata.Builder()
             .setTitle(title).setArtist(artist).setAlbumTitle(album)
@@ -53,7 +61,8 @@ fun List<Song>.toMediaItems(session: dev.nori.music.ffi.queue.Session, coverUrl:
  * Songs the core handed out for the queue itself and already keeps (the saved queue, autofill, the
  * offline bridge): made into the player's items without crossing back.
  */
-fun List<Song>.heldMediaItems(coverUrl: (Song) -> String?): List<MediaItem> = map { it.toMediaItem(coverUrl(it)) }
+fun List<Song>.heldMediaItems(coverUrl: (Song) -> String?): List<MediaItem> =
+    zip(itemKeyTexts(map { it.key })) { song, id -> song.toMediaItem(id, coverUrl(song)) }
 
 const val RADIO_PREFIX = "radio:"
 

@@ -591,7 +591,7 @@ class PageController: TablePage {
 
     func isCurrent(_ item: Item) -> Bool {
         guard let song = Core.shared.now.song else { return false }
-        return item.kind == "song" && item.id == song.id
+        return item.kind == "song" && item.key == song.key
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -650,9 +650,9 @@ class PageController: TablePage {
                 (view.window?.rootViewController as? ShellController)?.openPlayer()
             }
         case "downloadedAlbum": push(PageController(kind: NORI_PAGE_DOWNLOADED_ALBUM, arg: item.id, title: item.title))
-        case "album": push(PageController(kind: NORI_PAGE_ALBUM, arg: item.id, title: item.title))
-        case "artist": push(PageController(kind: NORI_PAGE_ARTIST, arg: item.id, title: item.title))
-        case "playlist": push(PageController(kind: NORI_PAGE_PLAYLIST, arg: item.id, title: item.title))
+        case "album": push(PageController(kind: NORI_PAGE_ALBUM, arg: item.ref, title: item.title))
+        case "artist": push(PageController(kind: NORI_PAGE_ARTIST, arg: item.ref, title: item.title))
+        case "playlist": push(PageController(kind: NORI_PAGE_PLAYLIST, arg: item.ref, title: item.title))
         case "genre": push(PageController(kind: NORI_PAGE_GENRE, arg: item.id, title: item.title))
         case "mix": push(PageController(kind: NORI_PAGE_MIX, arg: item.id, title: Say.mix(item.count)))
         case "smart":
@@ -736,19 +736,19 @@ class PageController: TablePage {
         }
         // The download entries need the songs (stored, else the server's): read off the main thread.
         DispatchQueue.global(qos: .userInitiated).async {
-            let raw = item.external ? nil : item.id.withCString { nori_ios_collection_download_entries(kind, $0) }
+            let raw = item.external ? nil : item.ref.withCString { nori_ios_collection_download_entries(kind, $0) }
             let entries = takenJSON(raw) as? [[String: Int]] ?? []
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 let sheet = Sheet(item.title, item.subtitle.isEmpty ? nil : item.subtitle, cover: item.cover)
                 if !Core.shared.rules.asks {
-                    sheet.add(Say.play, glyph: Glyph.draw(Iconoir.play, 20)) { item.id.withCString { nori_ios_play_collection(kind, $0, 0) } }
+                    sheet.add(Say.play, glyph: Glyph.draw(Iconoir.play, 20)) { item.ref.withCString { nori_ios_play_collection(kind, $0, 0) } }
                 }
-                sheet.add(Say.shuffle, glyph: Glyph.draw(Iconoir.shuffle, 20)) { item.id.withCString { nori_ios_play_collection(kind, $0, 1) } }
-                sheet.add(Say.playNext, glyph: Glyph.draw(Iconoir.playlistPlay, 20)) { item.id.withCString { nori_ios_enqueue_collection(kind, $0, 1) } }
-                sheet.add(Say.addToQueue, glyph: Glyph.draw(Iconoir.playlist, 20)) { item.id.withCString { nori_ios_enqueue_collection(kind, $0, 0) } }
+                sheet.add(Say.shuffle, glyph: Glyph.draw(Iconoir.shuffle, 20)) { item.ref.withCString { nori_ios_play_collection(kind, $0, 1) } }
+                sheet.add(Say.playNext, glyph: Glyph.draw(Iconoir.playlistPlay, 20)) { item.ref.withCString { nori_ios_enqueue_collection(kind, $0, 1) } }
+                sheet.add(Say.addToQueue, glyph: Glyph.draw(Iconoir.playlist, 20)) { item.ref.withCString { nori_ios_enqueue_collection(kind, $0, 0) } }
                 PageController.add(entries, to: sheet, from: self) { act in
-                    item.id.withCString { nori_ios_collection_download_act(kind, $0, act) }
+                    item.ref.withCString { nori_ios_collection_download_act(kind, $0, act) }
                 }
                 if kind != NORI_PAGE_PLAYLIST && !item.external && Core.shared.rules.stars {
                     let on = Core.shared.isFavorite(item)
@@ -783,7 +783,7 @@ class PageController: TablePage {
         let ask = Sheet(Say.deleteNamed(playlist.title) + "?")
         ask.add(Say.deleteNamed(playlist.title), glyph: Glyph.draw(Iconoir.trash, 20), destructive: true) { [weak self] in
             DispatchQueue.global(qos: .userInitiated).async {
-                let ok = playlist.id.withCString { nori_ios_playlist_delete($0) } == 1
+                let ok = playlist.ref.withCString { nori_ios_playlist_delete($0) } == 1
                 DispatchQueue.main.async {
                     if ok { self?.reload() } else { Toast.show(Say.failed) }
                 }

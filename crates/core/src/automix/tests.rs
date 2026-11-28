@@ -3,25 +3,29 @@ use nori_player::automix::synth::Synth;
 use nori_player::pcm::Encoding;
 
 use super::*;
-use crate::Core;
+use crate::{Core, ItemKey};
+
+fn keys(ids: &[&str]) -> Vec<ItemKey> {
+    ids.iter().map(|id| ItemKey::own(*id)).collect()
+}
 
 #[test]
 fn analysis_stored_or_missing() {
     let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
-    assert_eq!(core.analysis_get("a".into()).unwrap(), None);
-    assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(core.analysis_get(ItemKey::own("a")).unwrap(), None);
+    assert_eq!(core.analysis_missing(vec![ItemKey::own("a"), ItemKey::own("b")]).unwrap(), keys(&["a", "b"]));
     let s = Synth::new(120.0);
     let bytes: Vec<u8> = s.render().iter().flat_map(|v| v.to_le_bytes()).collect();
     let t = core.analysis_run("a".into(), bytes, s.rate as i32, 1, Encoding::Float).unwrap();
-    assert_eq!(core.analysis_get("a".into()).unwrap(), Some(t.clone()));
-    assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["a".to_string(), "b".to_string()], "no vocal curve yet");
+    assert_eq!(core.analysis_get(ItemKey::own("a")).unwrap(), Some(t.clone()));
+    assert_eq!(core.analysis_missing(vec![ItemKey::own("a"), ItemKey::own("b")]).unwrap(), keys(&["a", "b"]), "no vocal curve yet");
     let curve = nori_player::automix::vocal::VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3], loudness: vec![4, 5, 6] };
     nori_automix::store::put_voice(&core.db.lock(), "a", &curve).unwrap();
-    assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["b".to_string()]);
+    assert_eq!(core.analysis_missing(vec![ItemKey::own("a"), ItemKey::own("b")]).unwrap(), keys(&["b"]));
     core.analysis_store(TrackAnalysis { song_id: "b".into(), analysis_version: ANALYSIS_VERSION - 1, ..t.clone() }).unwrap();
-    assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["b".to_string()], "old version");
+    assert_eq!(core.analysis_missing(vec![ItemKey::own("a"), ItemKey::own("b")]).unwrap(), keys(&["b"]), "old version");
     core.analysis_store(TrackAnalysis { bpm: 99.5, ..t.clone() }).unwrap();
-    assert_eq!(core.analysis_get("a".into()).unwrap().unwrap().bpm, 99.5, "store replaces");
+    assert_eq!(core.analysis_get(ItemKey::own("a")).unwrap().unwrap().bpm, 99.5, "store replaces");
 }
 
 #[test]
@@ -31,16 +35,16 @@ fn finish_stores_row_and_voice() {
     let x = s.render();
     let mut a = analysis::Analyzer::new(s.rate, 60_000);
     a.feed(&x[..s.rate as usize * 10]);
-    assert_eq!(core.analysis_finish("x", a).unwrap(), None, "10 s is not a track");
+    assert_eq!(core.analysis_finish(&ItemKey::own("x"), a).unwrap(), None, "10 s is not a track");
     let mut a = analysis::Analyzer::new(s.rate, 60_000);
     a.feed(&x);
-    let t = core.analysis_finish("x", a).unwrap().unwrap();
+    let t = core.analysis_finish(&ItemKey::own("x"), a).unwrap().unwrap();
     assert!((t.bpm - 128.0).abs() < 0.05);
-    assert_eq!(core.analysis_get("x".into()).unwrap(), Some(t));
-    let voice = core.analysis_voice("x").unwrap().expect("a curve");
+    assert_eq!(core.analysis_get(ItemKey::own("x")).unwrap(), Some(t));
+    let voice = core.analysis_voice(&ItemKey::own("x")).unwrap().expect("a curve");
     let secs = x.len() as f64 / s.rate as f64;
     assert!((voice.seconds() - secs).abs() < 0.5, "{} s of curve for {secs} s", voice.seconds());
-    assert_eq!(core.analysis_voice("none").unwrap(), None);
+    assert_eq!(core.analysis_voice(&ItemKey::own("none")).unwrap(), None);
 }
 
 impl Core {
@@ -71,14 +75,14 @@ fn beat_model_grid_survives_reanalysis() {
     };
     core.analysis_store(row.clone()).unwrap();
     core.analysis_store(TrackAnalysis { song_id: "old".into(), analysis_version: 1, ..row.clone() }).unwrap();
-    assert_eq!(core.analysis_neural_missing(vec!["s".into(), "old".into(), "none".into()]).unwrap(), vec!["s".to_string()]);
+    assert_eq!(core.analysis_neural_missing(vec![ItemKey::own("s"), ItemKey::own("old"), ItemKey::own("none")]).unwrap(), keys(&["s"]));
     let sure = EndGrid { bpm: 90.0, offset_ms: 10.0, confidence: 1.0, stability: 1.0, downbeat_phase: 0, beats_per_bar: 3, other_phase: None, anchor_ms: 0.0, span_ms: None };
-    assert!(core.analysis_neural_store("s", MixEnd::Intro, Some(sure)).unwrap());
-    assert!(!core.analysis_neural_store("s", MixEnd::Outro, None).unwrap());
-    assert!(!core.analysis_neural_store("none", MixEnd::Outro, None).unwrap());
-    let stored = core.analysis_get("s".into()).unwrap().unwrap();
+    assert!(core.analysis_neural_store(&ItemKey::own("s"), MixEnd::Intro, Some(sure)).unwrap());
+    assert!(!core.analysis_neural_store(&ItemKey::own("s"), MixEnd::Outro, None).unwrap());
+    assert!(!core.analysis_neural_store(&ItemKey::own("none"), MixEnd::Outro, None).unwrap());
+    let stored = core.analysis_get(ItemKey::own("s")).unwrap().unwrap();
     assert_eq!((stored.intro_bpm, stored.intro_beats_per_bar, stored.intro_grid_source, stored.outro_grid_source), (90.0, 3, GRID_NEURAL, GRID_CHECKED));
-    assert!(core.analysis_neural_missing(vec!["s".into()]).unwrap().is_empty());
+    assert!(core.analysis_neural_missing(vec![ItemKey::own("s")]).unwrap().is_empty());
     // A classical re-analysis keeps the model's grid.
     let s = Synth { secs: 200.0, ..Synth::new(120.0) };
     let bytes: Vec<u8> = s.render().iter().flat_map(|v| v.to_le_bytes()).collect();
@@ -94,7 +98,7 @@ fn downloads_are_offered_an_analysis_when_automix_turns_on_and_once_per_version(
     settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
     let core = Core::new(String::new(), "t".into(), std::sync::Arc::new(crate::queue::Session::new(settings.clone()))).unwrap();
     core.download_queue(vec![crate::Song { id: "a".into(), ..Default::default() }]).unwrap();
-    core.download_settle(vec!["a".into()], vec![true]).unwrap();
+    core.download_settle(vec![ItemKey::own("a")], vec![true]).unwrap();
     assert_eq!(core.analysis_offer_on_switch(Smooth, Dj), None, "the styles share one analysis");
     assert_eq!(core.analysis_offer_on_switch(Dj, Off), None);
     assert_eq!(core.analysis_offer_on_switch(Off, Smooth).map(|o| (o.songs, o.reason)), Some((1, AnalysisReason::TurnedOn)));

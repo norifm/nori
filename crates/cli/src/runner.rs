@@ -135,7 +135,7 @@ struct Runner {
     /// Pending cover requests; dropping a ticket cancels the fetch.
     tickets: Vec<nori_covers::loader::Ticket>,
     /// Id of the audible song last shown.
-    heard: Option<String>,
+    heard: Option<nori_core::ItemKey>,
     /// Rewrite the whole screen, pictures included, at the next draw.
     repaint: bool,
     /// A cover arrived while unfocused: repaint when focus returns.
@@ -720,6 +720,16 @@ impl Runner {
                     AddDo::Open { added } => added,
                     _ => None,
                 };
+                if let Some(to) = app.login.source_for.take() {
+                    let settings = &self.root.app.settings;
+                    nori_host::source_added(settings, &to, &p.id);
+                    prefs_changed(app);
+                    if let Some(active) = settings.current().and_then(|pr| pr.active_server().cloned()).filter(|a| a.id == to) {
+                        self.open(app, active, None);
+                    }
+                    app.go(View::Settings);
+                    return;
+                }
                 prefs_changed(app);
                 self.open(app, p.clone(), added);
                 app.go(View::Home);
@@ -803,7 +813,7 @@ impl Runner {
         }
         let now = s.now();
         app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, fading_until: now.fading_until, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
-        let id = now.song.as_ref().map(|s| s.id.clone());
+        let id = now.song.as_ref().map(nori_core::Keyed::key);
         if id != self.heard {
             self.heard = id.clone();
             app.heard(now.song);
@@ -1054,6 +1064,19 @@ impl Runner {
                 }
                 return prefs_changed(app);
             }
+            Cmd::Source { profile, change } => {
+                let settings = &self.root.app.settings;
+                match change {
+                    crate::app::SourceChange::Add(id) => nori_host::source_added(settings, &profile, &id),
+                    crate::app::SourceChange::Move { id, by } => nori_host::source_moved(settings, &profile, &id, by),
+                    crate::app::SourceChange::Remove(id) => nori_host::source_removed(settings, &profile, &id),
+                }
+                prefs_changed(app);
+                if let Some(active) = settings.current().and_then(|pr| pr.active_server().cloned()).filter(|a| a.id == profile) {
+                    self.open(app, active, None);
+                }
+                return;
+            }
             Cmd::ChooseIdentity(index) => {
                 let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
                 let h = (**s).clone();
@@ -1106,24 +1129,21 @@ impl Runner {
             }
             Cmd::Download(songs) => s.download(songs),
             Cmd::ReadDownloads(ids) => {
-                let states = s.download_states(&ids.iter().map(String::as_str).collect::<Vec<_>>());
+                let states = s.download_states(&ids);
                 app.knows_downloads(ids, states);
             }
             Cmd::Sleep(choice) => s.sleep_pick(choice),
-            Cmd::ExcludeFromMixes(id, on) => match s.core.mix_excluded_set(id.clone(), on) {
-                Ok(()) if on => _ = app.excluded.insert(id),
-                Ok(()) => _ = app.excluded.remove(&id),
+            Cmd::ExcludeFromMixes(key, on) => match s.core.mix_excluded_set(key.clone(), on) {
+                Ok(()) if on => _ = app.excluded.insert(key),
+                Ok(()) => _ = app.excluded.remove(&key),
                 Err(e) => app.say(e.to_string(), true),
             },
-            Cmd::AddToPlaylist { id, songs } => {
-                let name = app.library.playlists.ready().and_then(|v| v.iter().find(|p| p.id == id)).map(|p| p.name.clone()).unwrap_or_default();
-                self.playlist_write(s, nori_core::client::Write::AddToPlaylist { id, song_ids: songs }, crate::text::added_to(&name), None);
+            Cmd::AddToPlaylist { playlist, songs } => {
+                let said = crate::text::added_to(&playlist.name);
+                self.playlist_change(s, app, playlist, nori_host::session::PlaylistChange::Add { songs }, said);
             }
-            Cmd::NewPlaylist { name, songs } => {
-                let said = crate::text::created(&name);
-                self.playlist_write(s, nori_core::client::Write::CreatePlaylist { name, song_ids: songs }, said, None);
-            }
-            Cmd::EditPlaylist { id, write, said } => self.playlist_write(s, write, said, Some(id)),
+            Cmd::NewPlaylist { name, songs } => self.playlist_made(s, name, songs),
+            Cmd::EditPlaylist { playlist, change, said } => self.playlist_change(s, app, playlist, change, said),
             Cmd::RedrawMix(mix) => {
                 let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-mix", move || {
@@ -1132,7 +1152,7 @@ impl Runner {
                 });
             }
             Cmd::SaveMix { title, songs } => {
-                let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+                let (client, handle, tx, id) = (s.client.clone(), nori_host::session::Handle::clone(s), self.tx.clone(), s.id);
                 nori_host::spawn("nori-save-mix", move || {
                     use nori_core::cache_policy::{Page, Read};
                     let send = |m: Msg| {
@@ -1144,8 +1164,7 @@ impl Runner {
                         _ => Vec::new(),
                     };
                     let name = nori_core::menus::saved_mix_name(title, names);
-                    let ids = songs.iter().map(|s| s.id.clone()).collect();
-                    match block_on(client.write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: ids })) {
+                    match handle.playlist_make(name.clone(), songs) {
                         Ok(()) => {
                             send(Msg::Note { text: crate::text::created(&name), error: false });
                             send(Msg::Reload(crate::backend::Req::Playlists));
@@ -1183,8 +1202,8 @@ impl Runner {
                 ids.iter().for_each(|id| s.download_remove(id));
                 s.load(crate::backend::Req::Downloads);
             }
-            Cmd::Star(nori_core::client::Starrable::Song, id, on) => s.star_song(id, on, self.there()),
-            Cmd::Star(kind, id, on) => s.star(kind, id, on),
+            Cmd::Star(nori_core::client::Starrable::Song, key, on) => s.star_song(key, on, self.there()),
+            Cmd::Star(kind, key, on) => s.star(key.source, kind, key.id, on),
             Cmd::Pin(id, on) => nori_core::browse::pin_playlist(&self.root.app.settings, id, on),
             Cmd::Pick(device) => {
                 if let Some(r) = s.remote() {
@@ -1299,28 +1318,49 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::ImportCert { .. } | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::Scrobbler { .. } | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::ImportCert { .. } | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::Scrobbler { .. } | Cmd::Source { .. } | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
         }
     }
 
 }
 
 impl Runner {
-    /// Changes a playlist on the server, then says `said` and has the playlists read again.
-    /// Asks for `w`, then says `said` and reads the playlists again, and playlist `page` when its page changed.
-    fn playlist_write(&self, s: &Session, w: nori_core::client::Write, said: String, page: Option<String>) {
+    /// Changes `playlist` where it is kept, then says `said` and reads the playlists and its page again;
+    /// a playlist that does not take the songs says why.
+    fn playlist_change(&self, s: &Session, app: &App, playlist: nori_core::Playlist, change: nori_host::session::PlaylistChange, said: String) {
+        let (handle, tx, id) = (nori_host::session::Handle::clone(s), self.tx.clone(), s.id);
+        let (prefs, kinds) = (app.prefs.clone(), app.settings.own.kinds.clone());
+        nori_host::spawn("nori-playlist", move || {
+            let send = |m: Msg| {
+                let _ = tx.send(Msg::From(id, Box::new(m)));
+            };
+            let (name, page) = (playlist.name.clone(), crate::backend::Req::Playlist(playlist.id.clone(), nori_core::sources::playlist_at(&playlist)));
+            match handle.playlist_change(playlist, change) {
+                Ok(nori_host::session::PlaylistChanged::Done { .. }) => {
+                    send(Msg::Note { text: said, error: false });
+                    send(Msg::Reload(crate::backend::Req::Playlists));
+                    send(Msg::Reload(page));
+                }
+                Ok(nori_host::session::PlaylistChanged::Refused { why }) => {
+                    let text = crate::text::playlist_refused(&name, &why, |source| crate::text::source_name(&prefs, &kinds, source));
+                    send(Msg::Note { text, error: true });
+                }
+                Err(e) => send(Msg::Note { text: crate::text::net_error(&e), error: true }),
+            }
+        });
+    }
+
+    /// A new playlist named `name` of `songs`, kept where the core says.
+    fn playlist_made(&self, s: &Session, name: String, songs: Vec<nori_core::Song>) {
         let (handle, tx, id) = (nori_host::session::Handle::clone(s), self.tx.clone(), s.id);
         nori_host::spawn("nori-playlist", move || {
             let send = |m: Msg| {
                 let _ = tx.send(Msg::From(id, Box::new(m)));
             };
-            match handle.write_playlist(w) {
+            match handle.playlist_make(name.clone(), songs) {
                 Ok(()) => {
-                    send(Msg::Note { text: said, error: false });
+                    send(Msg::Note { text: crate::text::created(&name), error: false });
                     send(Msg::Reload(crate::backend::Req::Playlists));
-                    if let Some(id) = page {
-                        send(Msg::Reload(crate::backend::Req::Playlist(id)));
-                    }
                 }
                 Err(e) => send(Msg::Note { text: crate::text::net_error(&e), error: true }),
             }

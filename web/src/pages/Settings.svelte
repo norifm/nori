@@ -59,7 +59,8 @@
   }
 
   const profiles = $derived(page.data?.profiles);
-  const named = (p: Profile) => p.label || W.subsonic;
+  const named = (p: Profile) => p.label || (p.kind === "local" ? W.local : W.subsonic);
+  const sub = (p: Profile) => [p.user, p.sources?.length ? `+ ${p.sources.join(", ")}` : ""].filter(Boolean).join(" · ");
   const inUse = $derived(profiles?.list.find((p) => p.on));
   /** The profile whose icon is being picked. */
   let picking = $state.raw<Profile | null>(null);
@@ -175,7 +176,7 @@
         {:else}
           <ProfileMark icon={p.icon} letter={p.letter} kind={p.kind} />
         {/if}
-        <button class="opens" disabled={p.on} onclick={() => void open(p)}><span class="words"><span>{named(p)}</span><span class="sub">{p.user}</span></span></button>
+        <button class="opens" disabled={p.on} onclick={() => void open(p)}><span class="words"><span>{named(p)}</span><span class="sub">{sub(p)}</span></span></button>
         {#if p.on}<span class="in-use" title={W.inUse} aria-label={W.inUse}><Icon name="check" /></span>{/if}
         {#if profiles?.picks}<button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => menu(e, p)}><Icon name="more-horiz" /></button>{/if}
       </div>

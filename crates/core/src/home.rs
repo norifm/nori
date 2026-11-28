@@ -24,12 +24,79 @@ pub enum ShelfItems {
 pub struct HomeKept {
     /// "For you": the favourites' tile, then the mixes; empty when the page has none.
     pub mixes: Vec<MixTile>,
-    /// A source's own Home (`ProfileRules::feed`) as last shown; None for a library's Home or none kept.
+    /// The sources' own Homes (`ProfileRules::feed`) as last shown, one after another; None for a
+    /// library's Home or none kept.
     pub feed: Option<Vec<FeedShelf>>,
-    /// The shelves of the rows asked for, in their order: what is kept, None where nothing is yet.
+    /// The shelves of the rows asked for, in their order: what is kept, None where nothing is yet. None
+    /// when no source is a library: a service's Home is its feed alone.
     pub shelves: Vec<Option<ShelfItems>>,
+    /// The order the shelves and the feed's shelves show in ([`home_woven`]).
+    pub places: Vec<HomePlace>,
     /// The queue left on the server as it last answered, when it is worth offering.
     pub offer: Option<QueueOffer>,
+}
+
+/// One of Home's shelves in the order they show: row `at` of the library's, or shelf `at` of the
+/// sources' own feeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum HomePlace {
+    Row { at: u32 },
+    Feed { at: u32 },
+}
+
+/// What a shelf shows, as it is told apart from another's: each item's kind and plain name and artist.
+fn looks(shelf: Either<'_>) -> std::collections::HashSet<(u8, String, String)> {
+    use nori_library::merged::plain;
+    let songs = |v: &[Song]| v.iter().map(|s| (0, plain(&s.title), plain(&s.artist))).collect::<Vec<_>>();
+    let albums = |v: &[Album]| v.iter().map(|a| (1, plain(&a.name), plain(&a.artist))).collect::<Vec<_>>();
+    let playlists = |v: &[Playlist]| v.iter().map(|p| (2, plain(&p.name), String::new())).collect::<Vec<_>>();
+    match shelf {
+        Either::Row(Some(ShelfItems::Songs { v })) => songs(v).into_iter().collect(),
+        Either::Row(Some(ShelfItems::Albums { v })) => albums(v).into_iter().collect(),
+        Either::Row(Some(ShelfItems::Playlists { v })) => playlists(v).into_iter().collect(),
+        Either::Row(None) => Default::default(),
+        Either::Feed(f) => songs(&f.songs).into_iter().chain(albums(&f.albums)).chain(playlists(&f.playlists)).chain(f.artists.iter().map(|a| (3, nori_library::merged::plain(&a.name), String::new()))).collect(),
+    }
+}
+
+enum Either<'a> {
+    Row(&'a Option<ShelfItems>),
+    Feed(&'a FeedShelf),
+}
+
+/// Home's shelves in the order they show: the library's rows (`rows`, across every source) and the
+/// sources' own feed shelves (`feed`) in turns, a row first, the rest of the longer after. A shelf
+/// near-identical to the one shown before it (at least half of the smaller's items in the other) is
+/// left out: a service's feed often holds the library's own shelf again.
+pub fn home_woven(rows: &[Option<ShelfItems>], feed: &[FeedShelf]) -> Vec<HomePlace> {
+    let mut out = Vec::new();
+    let mut before = std::collections::HashSet::new();
+    let (mut r, mut f) = (0, 0);
+    while r < rows.len() || f < feed.len() {
+        let row_turn = r < rows.len() && (f >= feed.len() || r <= f);
+        let (place, shown) = if row_turn {
+            r += 1;
+            (HomePlace::Row { at: r as u32 - 1 }, looks(Either::Row(&rows[r - 1])))
+        } else {
+            f += 1;
+            (HomePlace::Feed { at: f as u32 - 1 }, looks(Either::Feed(&feed[f - 1])))
+        };
+        let smaller = shown.len().min(before.len());
+        let shared = shown.intersection(&before).count();
+        if smaller > 0 && shared * 2 >= smaller {
+            continue;
+        }
+        out.push(place);
+        before = shown;
+    }
+    out
+}
+
+/// [`home_woven`] for a client that holds the shelves as lists.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn home_places(rows: Vec<Option<ShelfItems>>, feed: Vec<FeedShelf>) -> Vec<HomePlace> {
+    home_woven(&rows, &feed)
 }
 
 /// What a shelf's page holds, as the shelf shows it; `pins` the pinned playlists' ids.
@@ -61,40 +128,37 @@ impl Client {
 
     /// Home's `rows` (some of [`Client::home_rows`]), with "For you" when `mixes`, from what this device
     /// keeps. Nothing is asked of the server: the stored favourites are handed to the mixes and the
-    /// period's missing mixes drawn from the index, so it all comes at once.
+    /// period's missing mixes drawn from the index, so it all comes at once. A profile of several sources
+    /// has one Home: its rows across every source, the feeds of those that have their own Home woven in.
     pub fn home_kept(&self, rows: Vec<HomeRow>, mixes: bool) -> NetResult<HomeKept> {
-        let rules = self.core.rules();
-        let mixes = if mixes && rules.mixes {
+        let mixes = if mixes && self.mixes_anywhere() {
             self.mix_favourites_stored()?;
             self.core.mix_warm(local_epoch_day());
             self.core.mix_cards(self.core.session.settings.in_effect(|p| p.taste_model))
         } else {
             Vec::new()
         };
-        let feed = if rules.feed {
-            match self.read_stored(Read::HomeFeed)?.page {
-                Some(Page::Feed { v }) => Some(v),
-                _ => None,
-            }
-        } else {
-            None
-        };
+        let feed = self.home_feed_kept()?;
         let pins = self.core.session.settings.prefs(|p| p.pinned_playlists.clone());
-        let rows = if rules.feed { Vec::new() } else { rows };
+        let rows = if self.library_home() { rows } else { Vec::new() };
         let shelves = home_shelves(rows)
             .iter()
             .map(|shelf| match (shelf, shelf_read(shelf)) {
                 (HomeShelf::Songs { sort, descending, limit }, _) => Ok(Some(ShelfItems::Songs { v: self.core.browse_songs(sort.clone(), *descending, false, 0, 0, 0, *limit)? })),
-                (_, Some(read)) => Ok(self.read_stored(read)?.page.and_then(|p| shelf_items(shelf, p, &pins))),
+                (_, Some(read)) => Ok(self.read_kept(read)?.and_then(|p| shelf_items(shelf, p, &pins))),
                 (_, None) => Ok(None),
             })
             .collect::<NetResult<Vec<_>>>()?;
-        Ok(HomeKept { mixes, feed, shelves, offer: self.queue_offer_kept(false, None)? })
+        let places = home_woven(&shelves, feed.as_deref().unwrap_or_default());
+        Ok(HomeKept { mixes, feed, shelves, places, offer: self.queue_offer_kept(false, None)? })
     }
 
     /// The server's answer to `read` when it differs from the page kept for it; None when it is the same,
     /// the kept one is fresh, or the server can't be reached while one is kept.
     pub async fn read_refreshed(&self, read: Read) -> NetResult<Option<Page>> {
+        if !self.others_for(&read).is_empty() {
+            return self.read_refreshed_merged(read).await;
+        }
         let stored = self.read_stored(read.clone())?;
         if stored.fresh {
             return Ok(None);
@@ -139,6 +203,22 @@ mod tests {
         assert_eq!(kept.mixes[0].id, crate::mixes::board::FAVOURITES_MIX);
         assert_eq!(kept.offer.map(|o| o.index), Some(1), "the queue the server last offered");
         assert!(c.home_kept(Vec::new(), false).unwrap().mixes.is_empty());
+    }
+
+    /// Rows and feed shelves take turns, a row first; a shelf repeating most of the one before it is left
+    /// out, and a shelf not read yet repeats nothing.
+    #[test]
+    fn home_weaves_rows_and_feeds_without_repeating_a_shelf() {
+        let album = |name: &str| Album { name: name.into(), artist: "A".into(), ..Default::default() };
+        let song = |title: &str| Song { title: title.into(), artist: "A".into(), ..Default::default() };
+        let row = |names: &[&str]| Some(ShelfItems::Albums { v: names.iter().map(|n| album(n)).collect() });
+        let shelf = |songs: &[&str], albums: &[&str]| FeedShelf { songs: songs.iter().map(|t| song(t)).collect(), albums: albums.iter().map(|n| album(n)).collect(), ..Default::default() };
+        use HomePlace::{Feed, Row};
+        let rows = [row(&["One", "Two"]), None, row(&["Three"])];
+        let feed = [shelf(&[], &["two", "one", "Seven"]), shelf(&["Hey"], &[]), shelf(&["Hey", "Jude"], &[])];
+        assert_eq!(home_woven(&rows, &feed), [Row { at: 0 }, Row { at: 1 }, Feed { at: 1 }, Row { at: 2 }, Feed { at: 2 }], "the feed's first repeats row 0; row 1 is not read yet");
+        assert_eq!(home_woven(&rows, &[]), [Row { at: 0 }, Row { at: 1 }, Row { at: 2 }], "a library's Home");
+        assert_eq!(home_woven(&[], &feed), [Feed { at: 0 }, Feed { at: 1 }], "a service's Home, its repeated shelf once");
     }
 
     #[test]

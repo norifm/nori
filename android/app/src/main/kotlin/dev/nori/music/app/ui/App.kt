@@ -121,23 +121,36 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun artistHint(id: String): dev.nori.music.ffi.model.Artist? = artists[id]
     fun playlistHint(id: String): dev.nori.music.ffi.model.Playlist? = playlists[id]
 
-    fun album(id: String, hint: dev.nori.music.ffi.model.Album? = null) {
+    /** The profile's source the page of [route] opens in (null: the profile's own), as it was opened. */
+    private val sources = object : LinkedHashMap<String, String?>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>?) = size > 32
+    }
+    fun sourceOf(route: String): String? = sources[route]
+
+    fun album(id: String, hint: dev.nori.music.ffi.model.Album? = null, source: String? = hint?.source) {
         if (hint != null) albums[id] = hint
-        go("album/${Uri.encode(id)}")
+        go("album/${Uri.encode(id)}".also { sources[it] = source })
     }
     fun downloadedAlbum(id: String, hint: dev.nori.music.ffi.model.Album) {
         albums[id] = hint
         go("downloaded/${Uri.encode(id)}")
     }
-    fun artist(id: String, hint: dev.nori.music.ffi.model.Artist? = null) {
+    fun artist(id: String, hint: dev.nori.music.ffi.model.Artist? = null, source: String? = hint?.source) {
         if (hint != null) artists[id] = hint
-        go("artist/${Uri.encode(id)}")
+        go("artist/${Uri.encode(id)}".also { sources[it] = source })
     }
     /** One shelf of an artist's page in full: [group] is its place among the page's shelves. */
     fun artistReleases(id: String, group: Int) = go("artist/${Uri.encode(id)}/releases/$group")
+    /** Where the playlist of [route] is kept, as it was opened. */
+    private val kept = object : LinkedHashMap<String, dev.nori.music.ffi.PlaylistAt>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, dev.nori.music.ffi.PlaylistAt>?) = size > 32
+    }
+    fun playlistAt(route: String): dev.nori.music.ffi.PlaylistAt = kept[route] ?: dev.nori.music.ffi.PlaylistAt.Source(null)
+
+    /** Playlist [id], kept where [hint] says (nori's own on this device, else in its source). */
     fun playlist(id: String, hint: dev.nori.music.ffi.model.Playlist? = null) {
         if (hint != null) playlists[id] = hint
-        go("playlist/${Uri.encode(id)}")
+        go("playlist/${Uri.encode(id)}".also { route -> hint?.let { kept[route] = dev.nori.music.ffi.playlistAt(it) } })
     }
     fun genre(name: String) = go("genre/${Uri.encode(name)}")
     fun decade(year: Int) = go("decade/$year")
@@ -235,6 +248,12 @@ val LocalMessages = staticCompositionLocalOf<(String) -> Unit> { {} }
  * over its host's library, read only, where a song played or queued is asked of the host.
  */
 val LocalRules = staticCompositionLocalOf { dev.nori.music.ffi.library.profileRules(false) }
+
+/** The saved profile each source of the open profile is, by the id its items carry (null: its own), for their marks. */
+val LocalSources = staticCompositionLocalOf<Map<String?, dev.nori.music.ffi.settings.SavedServer>> { emptyMap() }
+
+/** What each source of the open profile is called, by the id its items carry (null: its own). */
+val LocalSourceNames = staticCompositionLocalOf<Map<String?, String>> { emptyMap() }
 
 /**
  * The songs a jam guest asked for that the host has not decided on yet, by id: their rows say "Asked". Read
@@ -431,6 +450,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             LocalSealTap provides { s, on -> actions.star(s, on) },
             LocalMessages provides actions::tell,
             LocalRules provides rules,
+            LocalSources provides settings.sourceProfiles.collectAsStateWithLifecycle().value,
+            LocalSourceNames provides settings.sourceNames.collectAsStateWithLifecycle().value,
             LocalAsked provides asked,
             LocalEinkScreen provides (prefs.motion == dev.nori.music.ffi.settings.Motion.EINK),
             LocalHiddenBars provides hiddenBars,

@@ -1,6 +1,7 @@
 //! The queue: songs in list order, play order under shuffle, hand-added marks, current song, repeat,
 //! and the offline bridge. Every change is made here first and mirrored to the platform's player.
 
+use crate::key::ItemKey;
 use crate::queue::{is_permutation, place, shuffle, shuffle_around, shuffle_in};
 
 /// How a song came into the queue.
@@ -44,7 +45,7 @@ pub struct Splice {
 /// A removed song with what is needed to restore it (undo).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Taken {
-    pub id: String,
+    pub id: ItemKey,
     /// List index.
     pub at: usize,
     pub hand: Hand,
@@ -59,7 +60,7 @@ pub const REPEAT_ALL: u8 = 2;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Playlist {
-    ids: Vec<String>,
+    ids: Vec<ItemKey>,
     /// Each entry's sequence number: who it is across edits, whatever song it holds.
     seqs: Vec<u64>,
     last_seq: u64,
@@ -108,7 +109,7 @@ impl Playlist {
         }
     }
 
-    pub fn ids(&self) -> &[String] {
+    pub fn ids(&self) -> &[ItemKey] {
         &self.ids
     }
     /// The entries' sequence numbers, in list order.
@@ -133,8 +134,8 @@ impl Playlist {
     pub fn current(&self) -> Option<usize> {
         self.cur
     }
-    pub fn current_id(&self) -> Option<&str> {
-        self.cur.and_then(|i| self.ids.get(i)).map(String::as_str)
+    pub fn current_id(&self) -> Option<&ItemKey> {
+        self.cur.and_then(|i| self.ids.get(i))
     }
     pub fn shuffling(&self) -> bool {
         self.order.is_some()
@@ -154,8 +155,8 @@ impl Playlist {
     pub fn hand(&self, i: usize) -> Hand {
         self.hand.get(i).copied().unwrap_or_default()
     }
-    pub fn parked_id(&self) -> Option<&str> {
-        self.parked.and_then(|i| self.ids.get(i)).map(String::as_str)
+    pub fn parked_id(&self) -> Option<&ItemKey> {
+        self.parked.and_then(|i| self.ids.get(i))
     }
     pub fn by_hand(&self) -> impl Iterator<Item = usize> + '_ {
         self.hand.iter().enumerate().filter(|(_, h)| h.by_user()).map(|(i, _)| i)
@@ -251,7 +252,7 @@ impl Playlist {
 
     /// Replaces the queue, starting at `start` (`None`: a random song when shuffling, else 0). Returns
     /// the start. A start on the current song keeps its entry: the list is made around it.
-    pub fn set(&mut self, ids: Vec<String>, start: Option<usize>, shuffling: bool, seed: u64) -> Option<usize> {
+    pub fn set(&mut self, ids: Vec<ItemKey>, start: Option<usize>, shuffling: bool, seed: u64) -> Option<usize> {
         let n = ids.len();
         let kept = start.zip(self.cur).filter(|&(s, c)| ids.get(s).is_some_and(|id| *id == self.ids[c])).map(|(s, c)| (s, self.seqs[c]));
         self.ids = ids;
@@ -281,7 +282,7 @@ impl Playlist {
 
     /// Replaces the queue, shuffled into `order` (list indexes, each once) and starting at `start`: the
     /// play order a queue had on another device. An order that does not fit the list is shuffled here.
-    pub fn set_in_order(&mut self, ids: Vec<String>, start: usize, order: Vec<usize>, seed: u64) -> Option<usize> {
+    pub fn set_in_order(&mut self, ids: Vec<ItemKey>, start: usize, order: Vec<usize>, seed: u64) -> Option<usize> {
         let n = ids.len();
         let at = self.set(ids, Some(start), true, seed);
         if let Some(o) = self.order.as_mut().filter(|_| is_permutation(&order, n)) {
@@ -291,7 +292,7 @@ impl Playlist {
     }
 
     /// Play next / Add to queue; returns the list index. An empty queue takes them as its list.
-    pub fn add(&mut self, ids: Vec<String>, hand: Hand) -> usize {
+    pub fn add(&mut self, ids: Vec<ItemKey>, hand: Hand) -> usize {
         let count = ids.len();
         let Some(cur) = self.cur.filter(|_| !self.ids.is_empty()) else {
             let at = self.ids.len();
@@ -313,7 +314,7 @@ impl Playlist {
     /// Songs from a controller at `at`, with a mark per song. If all are hand-added (and the queue is not
     /// empty) they go where [`Playlist::add`] puts them (the first mark decides); otherwise at `at`, marked
     /// [`Hand::Auto`] if all are the queue's own.
-    pub fn take(&mut self, at: usize, ids: Vec<String>, hands: &[Hand]) -> usize {
+    pub fn take(&mut self, at: usize, ids: Vec<ItemKey>, hands: &[Hand]) -> usize {
         if !self.ids.is_empty() && !hands.is_empty() && hands.iter().all(|h| h.by_user()) {
             return self.add(ids, hands[0]);
         }
@@ -341,7 +342,7 @@ impl Playlist {
     /// The rest of the list's own songs, joining its end: in list order after the others, or, shuffling,
     /// each at a random place among the songs not played yet ([`shuffle_in`]). Returns where they went in
     /// the list.
-    pub fn extend(&mut self, ids: Vec<String>, seed: u64) -> usize {
+    pub fn extend(&mut self, ids: Vec<ItemKey>, seed: u64) -> usize {
         let (at, count) = (self.ids.len(), ids.len());
         self.splice(at, ids, Hand::No);
         if let Some(mut order) = self.order.take() {
@@ -353,7 +354,7 @@ impl Playlist {
     }
 
     /// A plain insert at `at`; under shuffle the songs play after the rest.
-    pub fn insert(&mut self, at: usize, ids: Vec<String>, hand: Hand) {
+    pub fn insert(&mut self, at: usize, ids: Vec<ItemKey>, hand: Hand) {
         let at = at.min(self.ids.len());
         let count = ids.len();
         self.splice(at, ids, hand);
@@ -368,7 +369,7 @@ impl Playlist {
         self.rev += 1;
     }
 
-    fn splice(&mut self, at: usize, ids: Vec<String>, hand: Hand) {
+    fn splice(&mut self, at: usize, ids: Vec<ItemKey>, hand: Hand) {
         let count = ids.len();
         self.ids.splice(at..at, ids);
         let seqs = self.fresh(count);
@@ -429,14 +430,14 @@ impl Playlist {
     }
 
     /// The songs an undo would put back, in the order they were taken out.
-    pub fn undoable(&self) -> impl DoubleEndedIterator<Item = &str> {
-        self.taken.iter().map(|t| t.id.as_str())
+    pub fn undoable(&self) -> impl DoubleEndedIterator<Item = &ItemKey> {
+        self.taken.iter().map(|t| &t.id)
     }
 
     /// Puts back `id`, if the last removal took it out; returns the list index. Songs a clear took go
     /// back exactly where they were when put back last taken first, as another device's undo sends them.
-    pub fn restore_taken(&mut self, id: &str) -> Option<usize> {
-        let t = self.taken.remove(self.taken.iter().rposition(|t| t.id == id)?);
+    pub fn restore_taken(&mut self, id: &ItemKey) -> Option<usize> {
+        let t = self.taken.remove(self.taken.iter().rposition(|t| t.id == *id)?);
         Some(self.restore(&t))
     }
 
@@ -544,7 +545,7 @@ impl Playlist {
 
     /// Inserts downloads to play while offline: the first time before the current (failed) song, which is
     /// parked, and playing the first; later just before the parked song. Given order, even under shuffle.
-    pub fn bridge(&mut self, ids: Vec<String>) -> Option<Splice> {
+    pub fn bridge(&mut self, ids: Vec<ItemKey>) -> Option<Splice> {
         if ids.is_empty() {
             return None;
         }
@@ -655,16 +656,24 @@ impl Playlist {
 mod tests {
     use super::*;
 
-    fn ids(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
+    fn ids(v: &[&str]) -> Vec<ItemKey> {
+        v.iter().map(|s| ItemKey::own(*s)).collect()
     }
 
     fn list(p: &Playlist) -> Vec<&str> {
-        p.ids().iter().map(String::as_str).collect()
+        p.ids().iter().map(|k| k.id.as_str()).collect()
     }
 
     fn played(p: &Playlist) -> Vec<&str> {
-        p.play_order().map(|i| p.ids()[i].as_str()).collect()
+        p.play_order().map(|i| p.ids()[i].id.as_str()).collect()
+    }
+
+    fn current(p: &Playlist) -> Option<&str> {
+        p.current_id().map(|k| k.id.as_str())
+    }
+
+    fn parked(p: &Playlist) -> Option<&str> {
+        p.parked_id().map(|k| k.id.as_str())
     }
 
     #[test]
@@ -708,7 +717,7 @@ mod tests {
         p.add(ids(&["x"]), Hand::Next);
         assert_eq!(list(&p), ["a", "x", "b", "c", "d"]);
         let t = p.taken(1).unwrap();
-        assert_eq!(t, Taken { id: "x".into(), at: 1, hand: Hand::Next, turn: None });
+        assert_eq!(t, Taken { id: ItemKey::own("x"), at: 1, hand: Hand::Next, turn: None });
         p.remove(1, 2);
         assert_eq!(list(&p), ["a", "b", "c", "d"]);
         assert_eq!(p.restore(&t), 1);
@@ -721,9 +730,9 @@ mod tests {
         p.moved_to(3);
         let t = p.taken(1).unwrap();
         p.remove(1, 2);
-        assert_eq!(p.current_id(), Some("c"));
+        assert_eq!(current(&p), Some("c"));
         p.restore(&t);
-        assert_eq!((p.current(), p.current_id()), (Some(3), Some("c")));
+        assert_eq!((p.current(), current(&p)), (Some(3), Some("c")));
         assert!(p.taken(9).is_none());
 
         // Restore under shuffle keeps turn.
@@ -737,17 +746,17 @@ mod tests {
         assert_eq!(p.len(), 5);
         assert_eq!(p.restore(&t), at);
         assert_eq!(played(&p), before, "the same play order as before it went");
-        assert_eq!(p.current_id(), Some("c"));
+        assert_eq!(current(&p), Some("c"));
 
         // Restored current song does not play.
         let mut p = Playlist::default();
         p.set(ids(&["a", "b", "c"]), Some(1), false, 0);
         let t = p.taken(1).unwrap();
         p.remove(1, 2);
-        assert_eq!(p.current_id(), Some("c"), "the next one plays");
+        assert_eq!(current(&p), Some("c"), "the next one plays");
         p.restore(&t);
         assert_eq!(list(&p), ["a", "b", "c"]);
-        assert_eq!(p.current_id(), Some("c"), "the music does not go back to it");
+        assert_eq!(current(&p), Some("c"), "the music does not go back to it");
 
         let mut p = Playlist::default();
         p.set(ids(&["only"]), Some(0), false, 0);
@@ -799,7 +808,7 @@ mod tests {
         let mut p = Playlist::default();
         p.set(ids(&["a", "b", "c", "d"]), Some(0), true, 3);
         let was = p.clone();
-        let gone: Vec<String> = p.clear_upcoming().iter().map(|&i| was.ids()[i].clone()).collect();
+        let gone: Vec<ItemKey> = p.clear_upcoming().iter().map(|&i| was.ids()[i].clone()).collect();
         for id in gone.iter().rev() {
             assert!(p.restore_taken(id).is_some(), "{id}");
         }
@@ -830,7 +839,7 @@ mod tests {
             ("add", true, |p| _ = p.add(ids(&["e"]), Hand::Next)),
             ("insert", true, |p| p.insert(0, ids(&["f"]), Hand::No)),
             ("remove", true, |p| p.remove(0, 1)),
-            ("restore", true, |p| _ = p.restore(&Taken { id: "f".into(), at: 0, hand: Hand::No, turn: None })),
+            ("restore", true, |p| _ = p.restore(&Taken { id: ItemKey::own("f"), at: 0, hand: Hand::No, turn: None })),
             ("move", true, |p| p.move_range(0, 1, 2)),
             ("shuffle", false, |p| p.set_shuffle(true, 3)),
         ];
@@ -849,12 +858,12 @@ mod tests {
         p.moved_to(2);
         p.remove_undoably(1, 2);
         assert_eq!((list(&p), p.current()), (vec!["a", "c"], Some(1)));
-        assert_eq!(p.restore_taken("x"), None, "only the song removed");
-        assert_eq!(p.restore_taken("b"), Some(1));
+        assert_eq!(p.restore_taken(&ItemKey::own("x")), None, "only the song removed");
+        assert_eq!(p.restore_taken(&ItemKey::own("b")), Some(1));
         assert_eq!((list(&p), p.current()), (vec!["a", "b", "c"], Some(2)));
-        assert_eq!(p.restore_taken("b"), None, "once");
+        assert_eq!(p.restore_taken(&ItemKey::own("b")), None, "once");
         p.remove_undoably(0, 2);
-        assert_eq!(p.restore_taken("a"), None, "two songs at once are not remembered");
+        assert_eq!(p.restore_taken(&ItemKey::own("a")), None, "two songs at once are not remembered");
     }
 
     #[test]
@@ -910,7 +919,7 @@ mod tests {
         assert_eq!(&played(&p)[5..], ["x", "y"], "add to queue: after the rest of what was played");
         assert_eq!(list(&p), ["a", "b", "z", "c", "d", "x", "y"]);
         assert_eq!(p.by_hand().collect::<Vec<_>>(), [2, 5, 6]);
-        assert_eq!(p.current_id(), Some("b"));
+        assert_eq!(current(&p), Some("b"));
 
         // Insert under shuffle plays last.
         let mut p = Playlist::default();
@@ -918,7 +927,7 @@ mod tests {
         p.insert(1, ids(&["x"]), Hand::No);
         assert_eq!(list(&p), ["a", "x", "b", "c"]);
         assert_eq!(*played(&p).last().unwrap(), "x");
-        assert_eq!(p.current_id(), Some("a"));
+        assert_eq!(current(&p), Some("a"));
     }
 
     #[test]
@@ -942,7 +951,7 @@ mod tests {
 
     #[test]
     fn add_to_queue_goes_after_the_album_and_ahead_of_autofill() {
-        let album: Vec<String> = (1..=11).map(|n| format!("t{n}")).collect();
+        let album: Vec<ItemKey> = (1..=11).map(|n| ItemKey::own(format!("t{n}"))).collect();
         let mut p = Playlist::default();
         p.set(album, Some(9), false, 0);
         assert_eq!(p.take(11, ids(&["f1", "f2"]), &[Hand::Auto, Hand::Auto]), 11, "autofill past the end");
@@ -954,7 +963,7 @@ mod tests {
 
     #[test]
     fn shuffle_keeps_autofill_after_the_list() {
-        let list_songs: Vec<String> = (0..10).map(|n| format!("t{n}")).collect();
+        let list_songs: Vec<ItemKey> = (0..10).map(|n| ItemKey::own(format!("t{n}"))).collect();
         for seed in 1..50 {
             let mut p = Playlist::default();
             p.set(list_songs.clone(), Some(8), false, 0);
@@ -988,9 +997,9 @@ mod tests {
         let mut p = Playlist::default();
         p.set(ids(&["a", "b", "c"]), Some(1), false, 0);
         p.remove(1, 2);
-        assert_eq!((list(&p), p.current_id()), (vec!["a", "c"], Some("c")));
+        assert_eq!((list(&p), current(&p)), (vec!["a", "c"], Some("c")));
         p.remove(1, 2);
-        assert_eq!(p.current_id(), Some("a"), "the last one gone: the one before");
+        assert_eq!(current(&p), Some("a"), "the last one gone: the one before");
         p.remove(0, 1);
         assert_eq!((p.current(), p.shuffling()), (None, false));
 
@@ -1008,7 +1017,7 @@ mod tests {
         let mut p = Playlist::default();
         p.set(ids(&["a", "b", "c", "d"]), Some(0), false, 0);
         p.move_range(0, 1, 2);
-        assert_eq!((list(&p), p.current_id()), (vec!["b", "c", "a", "d"], Some("a")));
+        assert_eq!((list(&p), current(&p)), (vec!["b", "c", "a", "d"], Some("a")));
         p.move_range(3, 4, 0);
         assert_eq!(list(&p), ["d", "b", "c", "a"]);
         assert_eq!(p.current(), Some(3));
@@ -1024,9 +1033,9 @@ mod tests {
         p.set(ids(&["a", "b", "c"]), Some(1), false, 0);
         p.bridge(ids(&["x"]));
         p.remove(1, 2);
-        assert_eq!((p.parked_id(), p.current_id()), (None, Some("b")));
+        assert_eq!((parked(&p), current(&p)), (None, Some("b")));
         assert_eq!(p.bridge(ids(&["y"])).and_then(|s| s.seek), Some(1), "a later failure bridges from the song playing");
-        assert_eq!((list(&p), p.current_id(), p.parked_id()), (vec!["a", "y", "b", "c"], Some("y"), Some("b")));
+        assert_eq!((list(&p), current(&p), parked(&p)), (vec!["a", "y", "b", "c"], Some("y"), Some("b")));
     }
 
     #[test]
@@ -1035,15 +1044,15 @@ mod tests {
         p.set(ids(&["a", "b", "c", "d"]), Some(1), false, 0);
         // "b" failed: two downloads play before it.
         assert_eq!(p.bridge(ids(&["x", "y"])), Some(Splice { remove: vec![], at: 1, count: 2, seek: Some(1) }));
-        assert_eq!((list(&p), p.current_id()), (vec!["a", "x", "y", "b", "c", "d"], Some("x")));
+        assert_eq!((list(&p), current(&p)), (vec!["a", "x", "y", "b", "c", "d"], Some("x")));
         assert!(p.bridging() && !p.next_is_parked());
         assert!(p.by_hand().next().is_none(), "bridge songs are not the user's");
         p.moved_to(2);
         assert!(p.next_is_parked());
         assert_eq!(p.bridge(ids(&["z"])), Some(Splice { remove: vec![], at: 3, count: 1, seek: None }));
-        assert_eq!((list(&p), p.current_id()), (vec!["a", "x", "y", "z", "b", "c", "d"], Some("y")));
+        assert_eq!((list(&p), current(&p)), (vec!["a", "x", "y", "z", "b", "c", "d"], Some("y")));
         assert_eq!(p.unbridge(), Some(Splice { remove: vec![(1, 4)], at: 0, count: 0, seek: Some(1) }));
-        assert_eq!((list(&p), p.current_id(), p.bridging()), (vec!["a", "b", "c", "d"], Some("b"), false));
+        assert_eq!((list(&p), current(&p), p.bridging()), (vec!["a", "b", "c", "d"], Some("b"), false));
         assert_eq!(p.unbridge(), None);
 
         // Skipped out of the bridge to a song of the parked queue: that one goes on.
@@ -1054,7 +1063,7 @@ mod tests {
         p.moved_to(4);
         assert!(p.left_bridge());
         assert_eq!(p.leave_bridge(), Some(Splice { remove: vec![(1, 3)], at: 0, count: 0, seek: None }));
-        assert_eq!((list(&p), p.current_id(), p.bridging(), p.left_bridge()), (vec!["a", "b", "c", "d"], Some("c"), false, false));
+        assert_eq!((list(&p), current(&p), p.bridging(), p.left_bridge()), (vec!["a", "b", "c", "d"], Some("c"), false, false));
 
         // Server back during the bridge: the song playing ends into the parked one, which ends the bridge.
         let mut p = Playlist::default();
@@ -1062,12 +1071,12 @@ mod tests {
         p.bridge(ids(&["x", "y", "z"]));
         p.moved_to(2);
         assert_eq!(p.shorten_bridge(), Some(Splice { remove: vec![(3, 4), (1, 2)], at: 0, count: 0, seek: None }));
-        assert_eq!((list(&p), p.current_id(), p.next_is_parked()), (vec!["a", "y", "b", "c"], Some("y"), true));
+        assert_eq!((list(&p), current(&p), p.next_is_parked()), (vec!["a", "y", "b", "c"], Some("y"), true));
         assert_eq!(p.shorten_bridge(), None, "nothing more to drop");
         p.moved_to(2);
         assert!(p.left_bridge());
         assert_eq!(p.leave_bridge(), Some(Splice { remove: vec![(1, 2)], at: 0, count: 0, seek: None }));
-        assert_eq!((list(&p), p.current_id(), p.bridging()), (vec!["a", "b", "c"], Some("b"), false));
+        assert_eq!((list(&p), current(&p), p.bridging()), (vec!["a", "b", "c"], Some("b"), false));
 
         // Removed parked song resumes at the next.
         let mut p = Playlist::default();
@@ -1075,7 +1084,7 @@ mod tests {
         p.bridge(ids(&["x"]));
         p.remove(2, 3);
         assert_eq!(p.unbridge().and_then(|s| s.seek), Some(1));
-        assert_eq!((list(&p), p.current_id()), (vec!["a", "c", "d"], Some("c")), "not back to the start");
+        assert_eq!((list(&p), current(&p)), (vec!["a", "c", "d"], Some("c")), "not back to the start");
 
         // Bridge under shuffle.
         let mut p = Playlist::default();

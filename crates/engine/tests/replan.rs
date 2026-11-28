@@ -1,5 +1,6 @@
 //! Transition settings changed while playing apply at the next boundary, and a play right after a
 //! change uses it: the engine over a core's queue, settings and planner of the test's own.
+use nori_core::ItemKey;
 use crate::common;
 
 use std::collections::HashMap;
@@ -66,7 +67,7 @@ impl Rig {
         let net = Arc::new(Net(ids.iter().enumerate().map(|(k, id)| (id.to_string(), Arc::new(tone_wav(SECS, k as u32)))).collect()));
         core.session.register(songs);
         // Played from the album's page.
-        core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(0), false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al")));
+        core.session.set(ids.iter().map(|s| s.to_string()).map(ItemKey::own).collect(), Some(0), false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al")));
         let analyses = Analyses::of(client.clone());
         let library = CoreLibrary { client, bytes: net, store: Some(store), analyses: analyses.clone() };
         let card = Card::new();
@@ -124,7 +125,7 @@ fn keep_albums_off() {
     // Early in the second song, before its ending is made.
     rig.set("crossfadeKeepAlbums", "false");
     assert!(rig.mixes_into(2), "mixed into the third song once the album is no longer kept gapless");
-    let note = rig.core.session.planner.transition_note("a2").expect("a2's ending was planned");
+    let note = rig.core.session.planner.transition_note(&ItemKey::own("a2")).expect("a2's ending was planned");
     assert_ne!(note.kind, nori_player::types::TransitionKind::Gapless, "{note:?}");
 
     // Keep albums off remakes gapless ending.
@@ -160,7 +161,7 @@ fn each_setting_change_is_planned_with() {
         rig.set(name, value);
         let id = format!("b{}", k + 1);
         let _ = rig.mixes_into(k + 1);
-        let note = rig.core.session.planner.transition_note(&id).unwrap_or_else(|| panic!("{id}'s ending was planned"));
+        let note = rig.core.session.planner.transition_note(&ItemKey::own(id.as_str())).unwrap_or_else(|| panic!("{id}'s ending was planned"));
         assert!(ok(&note), "{name}={value}: {note:?}");
     }
 }
@@ -201,7 +202,7 @@ fn a_handed_mix_plays_on() {
     rig.set("autoMix", "OFF");
     let t = nori_player::automix::plan::plan(None, None, SECS as i64 * 1000, SECS as i64 * 1000, &Default::default());
     assert!(t.duration_ms >= 2_000, "a crossfade to hand over: {t:?}");
-    rig.core.session.planner.handed("g1", "g2", &t);
+    rig.core.session.planner.handed(&ItemKey::own("g1"), &ItemKey::own("g2"), &t);
     rig.engine.play_at(0, t.out_start_ms + t.duration_ms / 2);
     let mut from_the_ending = false;
     assert!(rig.until(10, |r| {

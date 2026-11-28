@@ -144,10 +144,15 @@ impl Nori {
         self.files.hand(id, &files)
     }
 
-    /// The open profile's id when it reads a folder whose files the page has not handed this visit (its
-    /// songs play once the folder is allowed or picked again); else null.
+    /// The open profile's (or a merged local source's) id when it reads a folder whose files the page has
+    /// not handed this visit (its songs play once the folder is allowed or picked again); else null.
     pub fn local_waits(&self) -> Option<String> {
-        self.active().filter(|p| p.kind == nori_core::settings::ServerKind::Local && !self.files.handed(&p.id)).map(|p| p.id)
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let active = prefs.active_server()?.clone();
+        std::iter::once(active.clone())
+            .chain(nori_core::settings::profile_sources(prefs.servers, active))
+            .find(|p| p.kind == nori_core::settings::ServerKind::Local && !self.files.handed(&p.id))
+            .map(|p| p.id)
     }
 
     /// Adds local profile `id` (`new_profile_id`) of a folder called `name`, the active one from now on.
@@ -158,30 +163,113 @@ impl Nori {
         self.enter(profile)
     }
 
+    /// Adds local profile `id` of a folder called `name` as a merged source of profile `to`.
+    pub async fn add_local_source(&self, to: String, id: String, name: String) -> Result<(), JsValue> {
+        self.may_change()?;
+        let form = SavedServer { id, kind: nori_core::settings::ServerKind::Local, name, ..Default::default() };
+        let source = SavedServer { ..form };
+        self.attach_source(&to, source)
+    }
+
+    /// Signs in to `url` and attaches the new profile as a merged source of profile `to`.
+    pub async fn login_source(&self, to: String, url: String, user: String, password: String) -> Result<(), JsValue> {
+        self.may_change()?;
+        let form = SavedServer { id: nori_core::settings::new_server_id(), name: user.clone(), url, user, password, ..Default::default() };
+        let profile = nori_core::providers::log_in(&self.kinds(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
+        self.attach_source(&to, profile)
+    }
+
+    /// Saves `source` as a merged source of profile `to`, keeping the active profile (re-entering it if `to`).
+    fn attach_source(&self, to: &str, source: SavedServer) -> Result<(), JsValue> {
+        let mut prefs = self.app.settings.current().unwrap_or_default();
+        let list = nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: std::mem::take(&mut prefs.active_server_id) };
+        let next = nori_core::settings::servers_source_added(list, to.to_string(), source);
+        (prefs.servers, prefs.active_server_id) = (next.servers, next.active_server_id);
+        let active = prefs.active_server().cloned();
+        self.app.settings.put(prefs);
+        if let Some(active) = active.filter(|p| p.id == to) {
+            self.enter(active)?;
+        }
+        Ok(())
+    }
+
     /// A new profile's id.
     pub fn new_profile_id(&self) -> String {
         nori_core::settings::new_server_id()
     }
 
-    /// The saved profiles in their order, as `{ picks, icons, list: [{ id, kind, label, user, host, icon,
-    /// letter, on }] }`: `kind` as `ServerKind::id`, `label` its name, else its address's host (`label`); `icon` what its circle shows (a
-    /// `ProfileIcon` by name) and `letter` the one `Letter` shows (`profile_letter`); `on` the one open.
-    /// `icons` are the picker's in its order (`profile_icons`), and `picks` whether profiles may be
-    /// changed here (`changes_profile`).
+    /// The saved profiles shown in their order (sources live inside their profile), as `{ picks, icons,
+    /// list: [{ id, kind, label, user, host, icon, letter, on, sources }] }`.
     pub fn profiles(&self) -> String {
-        use nori_core::settings::{label, profile_icons, profile_letter};
+        use nori_core::settings::{label, profile_icons, profile_letter, profile_sources, servers_shown};
         let prefs = self.app.settings.current().unwrap_or_default();
-        let list: Vec<Value> = prefs
-            .servers
-            .iter()
-            .map(|p| {
-                let named = label(&p.name, &p.url);
-                let letter = profile_letter(p.clone(), named.clone());
-                json!({ "id": p.id, "kind": p.kind.id(), "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": p.id == prefs.active_server_id })
-            })
-            .collect();
+        let row = |p: &SavedServer, all: &[SavedServer], active: &str| {
+            let named = label(&p.name, &p.url);
+            let letter = profile_letter(p.clone(), named.clone());
+            let sources: Vec<String> = profile_sources(all.to_vec(), p.clone()).iter().map(|s| label(&s.name, &s.url)).collect();
+            json!({ "id": p.id, "kind": p.kind.id(), "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": p.id == active, "sources": sources })
+        };
+        let shown = servers_shown(prefs.servers.clone());
+        let list: Vec<Value> = shown.iter().map(|p| row(p, &prefs.servers, &prefs.active_server_id)).collect();
         let icons: Vec<String> = profile_icons().iter().map(|i| format!("{i:?}")).collect();
         json!({ "picks": self.changes_profile(), "icons": icons, "list": list }).to_string()
+    }
+
+    /// Profile `id`'s merged sources and the saved profiles it can take: `{ shown, sources, offered }`,
+    /// `shown` false when `id` is itself a source of another profile.
+    pub fn profile_sources(&self, id: String) -> Result<String, JsValue> {
+        use nori_core::settings::{label, profile_letter, profile_sources, servers_shown};
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let profile = prefs.servers.iter().find(|p| p.id == id).cloned().ok_or_else(|| error("no such profile"))?;
+        let shown = servers_shown(prefs.servers.clone()).iter().any(|p| p.id == id);
+        let row = |p: &SavedServer| {
+            let named = label(&p.name, &p.url);
+            let letter = profile_letter(p.clone(), named.clone());
+            json!({ "id": p.id, "kind": p.kind.id(), "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": false })
+        };
+        let sources: Vec<Value> = if shown { profile_sources(prefs.servers.clone(), profile.clone()).iter().map(row).collect() } else { Vec::new() };
+        let offered: Vec<Value> = if shown { nori_core::providers::sources_offered(prefs.servers, profile).iter().map(row).collect() } else { Vec::new() };
+        Ok(json!({ "shown": shown, "sources": sources, "offered": offered }).to_string())
+    }
+
+    /// Adds saved profile `source_id` as a merged source of profile `id`.
+    pub fn source_add(&self, id: String, source_id: String) -> Result<(), JsValue> {
+        self.may_change()?;
+        let source = self.saved(&source_id)?;
+        self.attach_source(&id, source)
+    }
+
+    /// Moves merged source `source_id` of profile `id` by `by` places (-1 earlier, +1 later).
+    pub fn source_move(&self, id: String, source_id: String, by: i32) -> Result<(), JsValue> {
+        self.may_change()?;
+        let mut prefs = self.app.settings.current().unwrap_or_default();
+        for s in prefs.servers.iter_mut().filter(|s| s.id == id) {
+            if let Some(at) = s.sources.iter().position(|x| x == &source_id) {
+                let to = (at as i32 + by).max(0) as u32;
+                *s = nori_core::settings::profile_source_placed(s.clone(), source_id.clone(), to);
+            }
+        }
+        let active = prefs.active_server().cloned();
+        self.app.settings.put(prefs);
+        if let Some(active) = active.filter(|p| p.id == id) {
+            self.enter(active)?;
+        }
+        Ok(())
+    }
+
+    /// Removes merged source `source_id` from profile `id`; it becomes a profile of its own again.
+    pub fn source_remove(&self, id: String, source_id: String) -> Result<(), JsValue> {
+        self.may_change()?;
+        let mut prefs = self.app.settings.current().unwrap_or_default();
+        for s in prefs.servers.iter_mut().filter(|s| s.id == id) {
+            *s = nori_core::settings::profile_source_removed(s.clone(), source_id.clone());
+        }
+        let active = prefs.active_server().cloned();
+        self.app.settings.put(prefs);
+        if let Some(active) = active.filter(|p| p.id == id) {
+            self.enter(active)?;
+        }
+        Ok(())
     }
 
     /// The active server's music libraries, when it has more than one and this profile may pick them
@@ -494,8 +582,8 @@ impl Nori {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
         let change = serde_json::from_str::<pages::Change>(&change).map_err(error)?;
         #[cfg(feature = "engine")]
-        if let pages::Change::Star { what, id, on } = &change {
-            if what == "song" && self.star_there(id, *on) {
+        if let pages::Change::Star { what, id, source, on } = &change {
+            if what == "song" && source.is_none() && self.star_there(id, *on) {
                 return Ok(());
             }
         }
@@ -514,8 +602,9 @@ impl Nori {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
         let ids: Vec<String> = serde_json::from_str(&ids).map_err(error)?;
         let user = self.user();
-        let choices = client.playlist_choices(ids).await.map_err(error)?;
-        let v: Vec<Value> = choices.iter().map(|c| json!({ "playlist": pages::playlist(client.core(), &c.playlist, user.as_deref()), "adds": c.adds, "holds": c.holds })).collect();
+        // The web client opens one source: its songs are the profile's own.
+        let choices = client.clone().playlist_choices(ids.into_iter().map(nori_core::Song::only_id).collect()).await.map_err(error)?;
+        let v: Vec<Value> = choices.iter().map(|c| json!({ "playlist": pages::playlist(client.core(), &c.playlist, user.as_deref()), "adds": c.adds.iter().map(|s| &s.id).collect::<Vec<_>>(), "holds": c.holds })).collect();
         Ok(Value::Array(v).to_string())
     }
 
@@ -562,11 +651,10 @@ impl Nori {
         }
     }
 
-    /// Fills the offline index when the profile keeps one and it is empty, and reads a library of files
-    /// again (`ProfileRules::rescans`), as the session does.
+    /// Fills the offline index when the profile (or a merged source) keeps one and it is empty, and reads a
+    /// library of files again (`any_rescans`), as the session does.
     pub async fn sync_index(&self) -> Result<(), JsValue> {
-        let rules = self.rules();
-        let Some(client) = self.client().filter(|c| rules.rescans || rules.indexed && c.core().index_size().map_or(true, |s| s.songs == 0)) else { return Ok(()) };
+        let Some(client) = self.client().filter(|c| c.core().any_rescans() || c.core().any_empty_index()) else { return Ok(()) };
         client.sync_library().await.map(|_| ()).map_err(|e| error(e.to_string()))
     }
 
@@ -631,6 +719,7 @@ impl Nori {
     /// while it stands (`offer::Offered`): `{ songs, index, positionMs }` (the songs as a page reads
     /// them), or null.
     pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> Result<String, JsValue> {
+        let shown = shown.as_deref().map(nori_core::ItemKey::from_text);
         let client = self.client().ok_or_else(|| error("not signed in"))?;
         let found = client.queue_offer(playing, shown.clone()).await.map_err(error)?;
         Ok(self.offered(&client, found, shown, playing))
@@ -638,13 +727,14 @@ impl Nori {
 
     /// [`Nori::queue_offer`] as the server last answered, without asking it: at once.
     pub fn queue_offer_kept(&self, playing: bool, shown: Option<String>) -> Result<String, JsValue> {
+        let shown = shown.as_deref().map(nori_core::ItemKey::from_text);
         let client = self.client().ok_or_else(|| error("not signed in"))?;
         let found = client.queue_offer_kept(playing, shown.clone()).map_err(error)?;
         Ok(self.offered(&client, found, shown, playing))
     }
 
     /// `found` kept as the offer while it stands, as [`Nori::queue_offer`] gives it.
-    fn offered(&self, client: &nori_core::client::Client, found: Option<nori_core::library::QueueOffer>, shown: Option<String>, playing: bool) -> String {
+    fn offered(&self, client: &nori_core::client::Client, found: Option<nori_core::library::QueueOffer>, shown: Option<nori_core::ItemKey>, playing: bool) -> String {
         let mut offered = self.offered.borrow_mut();
         let Some(o) = offered.found(found, shown, playing) else { return "null".into() };
         let songs: Vec<Value> = o.songs.iter().map(|s| pages::song(client.core(), s)).collect();
@@ -654,7 +744,7 @@ impl Nori {
     /// The player shows `here` and is `playing` or not: whether the offer still stands; one that does
     /// not is let go.
     pub fn queue_offer_still(&self, here: Option<String>, playing: bool) -> bool {
-        self.offered.borrow_mut().still(here, playing)
+        self.offered.borrow_mut().still(here.as_deref().map(nori_core::ItemKey::from_text), playing)
     }
 
     /// The offer was taken up or turned down: that queue is not offered again (`Client::queue_offer_done`).
@@ -1179,7 +1269,13 @@ impl Nori {
         let core = nori_core::Core::new(db(), nori_core::settings::server_db_id(&profile.id), self.app.clone()).map_err(error)?;
         core.use_kinds(self.kinds());
         core.configure_profile(profile.clone()).map_err(error)?;
-        let client = Client::new(core, Arc::new(Fetch(())), nori_core::covers::CoverNet::new());
+        let transport: Arc<dyn nori_core::transport::Transport> = Arc::new(Fetch(()));
+        let cover_net = nori_core::covers::CoverNet::new();
+        let servers = self.app.settings.prefs(|p| p.servers.clone());
+        for source in nori_core::settings::profile_sources(servers, profile.clone()) {
+            let _ = core.open_source(db(), source, transport.clone(), cover_net.clone());
+        }
+        let client = Client::new(core, transport, cover_net);
         client.set_profile(nori_core::net_profile(&profile));
         *self.client.borrow_mut() = Some(client);
         Ok(())

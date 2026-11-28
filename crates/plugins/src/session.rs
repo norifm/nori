@@ -57,9 +57,9 @@ pub enum Repeat {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Moment {
     pub playing: bool,
-    /// The song playing's queue index and id.
+    /// The song playing's queue index and key.
     pub index: Option<u32>,
-    pub song: Option<String>,
+    pub song: Option<nori_model::ItemKey>,
     /// Where it is now.
     pub position_ms: u64,
     /// The output, by the core's key for it ("Bluetooth: WH-1000XM5").
@@ -135,6 +135,8 @@ pub trait Library: Send + Sync {
     fn repeat(&self) -> Repeat;
     /// The songs `ids`, in order, from the queue's songs or the profile.
     fn songs(&self, ids: &[String]) -> Result<Vec<Song>, t::Error>;
+    /// Queued song `key` as the queue keeps it.
+    fn queued(&self, key: &nori_model::ItemKey) -> Option<Song>;
     fn search(&self, query: &str, count: u32) -> Result<Vec<Found>, t::Error>;
     fn lookup(&self, kind: ItemKind, id: &str) -> Result<Found, t::Error>;
     fn songs_of(&self, kind: ItemKind, id: &str) -> Result<Vec<Song>, t::Error>;
@@ -208,7 +210,7 @@ impl s::Host for Host {
     fn now(&mut self) -> s::NowPlaying {
         let library = self.library().ok().filter(|_| self.may(Permission::PlaybackRead));
         let (moment, position_ms) = self.plugins().map(|p| p.moment()).unwrap_or_default();
-        let song = moment.song.as_ref().zip(library.as_ref()).and_then(|(id, l)| l.songs(std::slice::from_ref(id)).ok()?.into_iter().next());
+        let song = moment.song.as_ref().zip(library.as_ref()).and_then(|(id, l)| l.queued(id));
         s::NowPlaying {
             song: song.as_ref().map(song_out),
             index: moment.index,

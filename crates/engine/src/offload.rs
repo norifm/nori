@@ -16,6 +16,7 @@
 //! while the platform keeps asking is not kept by the platform: the other count is used, or with neither
 //! moving the CPU resumes where the clock says.
 
+use nori_player::key::ItemKey;
 use std::collections::VecDeque;
 
 use nori_player::pipeline::{Queue, Reading, Known, Songs};
@@ -83,7 +84,7 @@ pub trait OffloadOutput: Send {
     /// The song `id` (`song`, at ReplayGain `level`) is the one whose packets come next. True when the
     /// output applies `level` itself where the song starts: [`OffloadOutput::set_volume`] then carries
     /// only the fades.
-    fn song(&mut self, _song: &CodedSong, _id: &str, _level: f32) -> bool {
+    fn song(&mut self, _song: &CodedSong, _id: &ItemKey, _level: f32) -> bool {
         false
     }
     /// How much faster than real time the track may present: 1 for a real device, more for a simulation.
@@ -190,7 +191,7 @@ const AWAKE_BEFORE_MAX_MS: i64 = 60_000;
 #[derive(Debug, Clone)]
 struct Placed {
     index: usize,
-    id: String,
+    id: ItemKey,
     start: u64,
     /// Song time of its first frame (a seek lands in a packet).
     from_ms: i64,
@@ -928,7 +929,7 @@ impl Offload {
             return Some(tail);
         }
         let ms = |f: u64| f as i64 * 1000 / self.rate() as i64;
-        let (id, start) = self.t.placed.front().map_or((String::new(), 0), |p| (p.id.clone(), p.start));
+        let (id, start) = self.t.placed.front().map_or((String::new(), 0), |p| (p.id.to_string(), p.start));
         let raw = self.t.raw.map_or("nothing".into(), |r| r.to_string());
         let count = self.t.by.name();
         let (steps, most) = self.t.jitter;

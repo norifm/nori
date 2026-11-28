@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::client::{Client, NetResult};
-use crate::{Core, Song};
+use crate::{Core, ItemKey, Song};
 
 pub use nori_lyrics::race::*;
 use nori_settings::lyrics_sources::{lyrics_lookup, LyricsLookup};
@@ -24,7 +24,7 @@ impl LyricsCache for Core {
     }
 
     fn voice(&self, song: &Song) -> Option<nori_player::automix::vocal::VocalCurve> {
-        self.analysis_voice(&song.id).ok().flatten()
+        self.analysis_voice(&ItemKey::own(&song.id)).ok().flatten()
     }
 }
 
@@ -77,7 +77,7 @@ struct Screen {
     to: Arc<dyn LyricsShown>,
     last: parking_lot::Mutex<Option<LyricsPick>>,
     core: Arc<Core>,
-    song_id: String,
+    song_id: ItemKey,
     /// The view is of this device's own playback: what it shows is what devices following it show.
     own: bool,
     /// It shows the lyrics another device sent: its own lookup's answers are passed over.
@@ -85,7 +85,7 @@ struct Screen {
 }
 
 impl Screen {
-    fn new(to: Arc<dyn LyricsShown>, core: Arc<Core>, song_id: String, own: bool) -> Screen {
+    fn new(to: Arc<dyn LyricsShown>, core: Arc<Core>, song_id: ItemKey, own: bool) -> Screen {
         Screen { to, last: parking_lot::Mutex::new(None), core, song_id, own, sent: AtomicBool::new(false) }
     }
 
@@ -127,13 +127,13 @@ impl LyricsShown for Screen {
 /// following it, and the notice that lyrics may have changed on another device.
 #[derive(Default)]
 pub(crate) struct ShownHere {
-    last: parking_lot::Mutex<Option<(String, LyricsPick)>>,
+    last: parking_lot::Mutex<Option<(ItemKey, LyricsPick)>>,
     moved: nori_tasks::Notify,
 }
 
 impl Core {
     /// The lyrics a view here showed last for song `id`.
-    pub(crate) fn lyrics_here(&self, id: &str) -> Option<LyricsPick> {
+    pub(crate) fn lyrics_here(&self, id: &ItemKey) -> Option<LyricsPick> {
         self.lyrics_here.last.lock().as_ref().filter(|(song, _)| song == id).map(|(_, pick)| pick.clone())
     }
 
@@ -142,8 +142,8 @@ impl Core {
         self.lyrics_here.moved.notify();
     }
 
-    fn lyrics_shown_here(&self, id: &str, pick: LyricsPick) {
-        *self.lyrics_here.last.lock() = Some((id.to_string(), pick));
+    fn lyrics_shown_here(&self, id: &ItemKey, pick: LyricsPick) {
+        *self.lyrics_here.last.lock() = Some((id.clone(), pick));
         self.lyrics_moved();
         if let Some(remote) = self.remote.lock().upgrade() {
             remote.lyrics_changed();
@@ -152,7 +152,7 @@ impl Core {
 
     /// Song `id`'s lyrics shown here a step sooner (`dir` > 0) or later (< 0), or back to the check's
     /// timing (0), as another device following them asked.
-    pub(crate) fn lyrics_retime(&self, id: String, dir: i32) {
+    pub(crate) fn lyrics_retime(&self, id: ItemKey, dir: i32) {
         if let Some(pick) = self.lyrics_here(&id) {
             self.lyrics_nudge(id, pick, dir);
         }
@@ -189,7 +189,7 @@ impl Client {
             let Some(view) = work.view.as_mut() else { return };
             if view.entries == entries { return; }
             work.warmed.retain(|e| entries.contains(e));
-            let todo: Vec<(u64, String)> = next.into_iter().filter(|(e, _)| !work.warmed.contains(e)).collect();
+            let todo: Vec<(u64, ItemKey)> = next.into_iter().filter(|(e, _)| !work.warmed.contains(e)).collect();
             view.entries = entries.clone();
             let old = view.cancel.take();
             let registration = (!todo.is_empty()).then(|| {
@@ -228,25 +228,26 @@ impl Client {
     /// With remote control on it runs until dropped. Shown here while another device plays the song,
     /// the lyrics are that device's as it sends them, timed there (only it hears the song); shown for
     /// this device's own playback, they are what it sends, and move with a nudge made elsewhere.
-    pub async fn lyrics_for(&self, id: String, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
+    pub async fn lyrics_for(&self, id: ItemKey, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
         use futures_util::future::{select, Either};
-        let remote = self.core.remote.lock().upgrade();
-        let followed = remote.as_ref().and_then(|r| r.lyrics_followed(&id));
+        // Other devices are told of the profile's own songs alone.
+        let remote = self.core.remote.lock().upgrade().filter(|_| id.source.is_none());
+        let followed = remote.as_ref().and_then(|r| r.lyrics_followed(&id.id));
         let sent = matches!(followed, Some(Some(_)));
         let screen = Screen::new(shown, self.core.clone(), id.clone(), followed.is_none());
         // A jam's members ask the service its host chose, so everyone reads the same words.
-        let asked = match remote.as_ref().and_then(|r| r.jam_lyrics(&id)) {
+        let asked = match remote.as_ref().and_then(|r| r.jam_lyrics(&id.id)) {
             Some(service) => self.lyrics_asked().only(&service),
             None => self.lyrics_asked(),
         };
         // The device playing the song sent its lyrics: nothing is looked up here.
-        let lookup = async { if sent { Ok(()) } else { self.lyrics_for_with(id.clone(), &asked, &screen).await } };
+        let lookup = async { if sent { Ok(()) } else { self.lyrics_for_with(&id, &asked, &screen).await } };
         let Some(remote) = remote else { return lookup.await };
         // Until let go: the lyrics the device playing the song sends, or these retimed on another device.
         let elsewhere = async {
             loop {
                 let moved = self.core.lyrics_here.moved.notified();
-                match remote.lyrics_followed(&id) {
+                match remote.lyrics_followed(&id.id) {
                     Some(Some(pick)) => screen.sent(pick),
                     Some(None) => {}
                     None if screen.own => {
@@ -274,27 +275,33 @@ impl Client {
     }
 
     /// Song `id`'s lyrics looked up and cached, shown nowhere.
-    async fn lyrics_warm(&self, id: String) -> NetResult<()> {
+    async fn lyrics_warm(&self, id: ItemKey) -> NetResult<()> {
         let screen = Screen::new(Arc::new(Unseen), self.core.clone(), id.clone(), false);
-        self.lyrics_look_up(id, &self.lyrics_asked(), &screen).await
+        self.lyrics_in_source(&id, &self.lyrics_asked(), &screen).await
     }
 
     /// Song `id`'s lyrics looked up with the services `asked` and shown to `shown` up to the check against
     /// its voice, as no other device's.
     #[cfg(any(test, feature = "plugins"))]
-    pub(crate) async fn lyrics_found(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
-        self.lyrics_for_with(id.clone(), asked, &Screen::new(shown, self.core.clone(), id, false)).await
+    pub(crate) async fn lyrics_found(&self, id: ItemKey, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
+        self.lyrics_for_with(&id, asked, &Screen::new(shown, self.core.clone(), id.clone(), false)).await
+    }
+
+    /// Song `id`'s lyrics looked up through its source: its server's words and that source's cache.
+    async fn lyrics_in_source(&self, id: &ItemKey, asked: &LyricsLookup, screen: &Screen) -> NetResult<()> {
+        let other = self.other_source(id)?;
+        other.as_deref().unwrap_or(self).lyrics_look_up(id.id.clone(), asked, screen).await
     }
 
     /// [`Client::lyrics_for`]'s lookup with the services given.
-    async fn lyrics_for_with(&self, id: String, asked: &LyricsLookup, screen: &Screen) -> NetResult<()> {
-        self.lyrics_look_up(id.clone(), asked, screen).await?;
+    async fn lyrics_for_with(&self, id: &ItemKey, asked: &LyricsLookup, screen: &Screen) -> NetResult<()> {
+        self.lyrics_in_source(id, asked, screen).await?;
         let last = screen.last.lock().clone();
         let Some(mut pick) = last.filter(|p| p.origin != nori_settings::lyrics_sources::LyricsOrigin::Server && p.lyrics.synced) else { return Ok(()) };
         if !matches!(pick.lyrics.timing, nori_model::LyricsTiming::NotChecked | nori_model::LyricsTiming::Yours { automatic: None, .. }) {
             return Ok(());
         }
-        if let Some(voice) = self.core.voice_measured(&id).await {
+        if let Some(voice) = self.core.voice_measured(id).await {
             pick.lyrics.timing = nori_lyrics::sync::timing_against(&pick.lyrics, &voice);
             screen.show(pick);
         }
@@ -334,7 +341,7 @@ impl Client {
         // A downloaded song's lyrics were looked up at download: serve them from the cache without
         // requests; the server is re-asked only after a week, after showing them.
         let fresh = stored.as_ref().is_some_and(|s| s.fresh);
-        let downloaded = server.is_some() && !fresh && self.core.download_song(&id).is_some();
+        let downloaded = server.is_some() && !fresh && self.core.download_song(&ItemKey::own(&id)).is_some();
         let refresh_after = downloaded && self.read_stored_within(read(), DOWNLOADED_SERVER_KEPT_MS).is_ok_and(|s| !s.fresh);
         let has_lines = server.as_ref().is_some_and(|l| !l.lines.is_empty());
         let synced = server.as_ref().is_some_and(|l| l.synced);
@@ -381,8 +388,8 @@ pub(crate) const DOWNLOADED_SERVER_KEPT_MS: i64 = MISS_KEPT_MS;
 
 impl Core {
     /// The offset the listener gave `pick`'s words of song `song_id`, if they did.
-    fn lyrics_yours(&self, song_id: &str, pick: &LyricsPick) -> Option<i64> {
-        let key = nori_lyrics::timing::key(song_id, &pick.origin, &pick.lyrics);
+    fn lyrics_yours(&self, song_id: &ItemKey, pick: &LyricsPick) -> Option<i64> {
+        let key = nori_lyrics::timing::key(&song_id.text(), &pick.origin, &pick.lyrics);
         crate::db::kv_get(&self.db.lock(), &key).ok().flatten().and_then(|v| v.parse().ok())
     }
 }
@@ -392,10 +399,10 @@ impl Core {
     /// `pick`, song `song_id`'s lyrics, a step sooner (`dir` > 0) or later (< 0), or back to the sync
     /// check's timing (0); the listener's timing is kept for these words and given them whenever they
     /// are shown again.
-    pub fn lyrics_nudge(&self, song_id: String, mut pick: LyricsPick, dir: i32) -> LyricsPick {
+    pub fn lyrics_nudge(&self, song_id: ItemKey, mut pick: LyricsPick, dir: i32) -> LyricsPick {
         let remote = self.remote.lock().upgrade();
         // Another device's lyrics are timed where they play, and come back from there as nudged here.
-        match remote.and_then(|r| r.lyrics_nudge_sent(&song_id, dir)) {
+        match remote.zip(song_id.own_id()).and_then(|(r, id)| r.lyrics_nudge_sent(id, dir)) {
             Some(true) => {
                 pick.lyrics.timing = nori_lyrics::timing::nudged(pick.lyrics.timing, dir);
                 return pick;
@@ -404,7 +411,7 @@ impl Core {
             None => {}
         }
         pick.lyrics.timing = nori_lyrics::timing::nudged(pick.lyrics.timing, dir);
-        let key = nori_lyrics::timing::key(&song_id, &pick.origin, &pick.lyrics);
+        let key = nori_lyrics::timing::key(&song_id.text(), &pick.origin, &pick.lyrics);
         let kept = {
             let c = self.db.lock();
             match pick.lyrics.timing {
@@ -454,7 +461,7 @@ impl LyricsShown for Unseen {
 impl Client {
     /// Looks up a downloaded song's lyrics so they work offline, marking its lyrics work done when the
     /// lookup ends.
-    pub async fn lyrics_for_download(&self, id: String) {
+    pub async fn lyrics_for_download(&self, id: ItemKey) {
         let downloads = &self.core.downloads;
         downloads.with(|t| t.working(&id, crate::transfers::Work::Lyrics));
         let _ = self.lyrics_warm(id.clone()).await;
@@ -465,6 +472,7 @@ impl Client {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ItemKey;
     use crate::client::tests::{block, client, Fake};
     use crate::client::NetProfile;
     use crate::transport::FailureKind;
@@ -528,7 +536,7 @@ pub(crate) mod tests {
         fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
         let screen = Arc::new(Screen::default());
         let asked = lrclib();
-        let mut lookup = Box::pin(c.lyrics_found(s.id, &asked, screen.clone()));
+        let mut lookup = Box::pin(c.lyrics_found(ItemKey::own(s.id), &asked, screen.clone()));
         assert!(lookup.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
         assert_eq!(screen.0.lock().last().map(|p| p.origin.clone()), Some(LyricsOrigin::Lrclib));
     }
@@ -544,13 +552,13 @@ pub(crate) mod tests {
             *fake.metered.lock() = true;
             let ahead = Song { id: next.into(), ..song() };
             c.core.session.register(vec![Song { id: "current".into(), ..song() }, ahead]);
-            c.core.session.set(vec!["current".into(), next.into(), "later".into()], Some(0), false, None);
+            c.core.session.set(vec![ItemKey::own("current"), ItemKey::own(next), ItemKey::own("later")], Some(0), false, None);
             fake.answer(SYNCED);
             block(c.lyrics_prefetch());
             if next == "ahead" {
                 assert!(stored(&c, next), "prefetch must store the next song's words before it is played");
                 let shown = Arc::new(Screen::default());
-                block(c.lyrics_for(next.into(), shown.clone())).unwrap();
+                block(c.lyrics_for(ItemKey::own(next), shown.clone())).unwrap();
                 assert_eq!(shown.0.lock()[0].lyrics.lines[0].text, "timed");
                 assert_eq!(fake.asked().len(), 1, "opening the prefetched song needs no request");
                 assert!(fake.asked()[0].contains("id=ahead"));
@@ -564,7 +572,7 @@ pub(crate) mod tests {
         c.lyrics_view(true);
         let queue = ["current", "s1", "s2", "s3", "s4"];
         c.core.session.register(queue.iter().map(|id| Song { id: id.to_string(), ..song() }).collect());
-        c.core.session.set(queue.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
+        c.core.session.set(queue.iter().map(|id| id.to_string()).map(ItemKey::own).collect(), Some(0), false, None);
         (0..3).for_each(|_| fake.answer(SYNCED));
         block(c.lyrics_prefetch());
         assert_eq!(queue.map(|id| stored(&c, id)), [false, true, true, true, false]);
@@ -583,7 +591,7 @@ pub(crate) mod tests {
         let (c, fake) = setup();
         let queue = ["current", "s1", "s2", "s3"];
         c.core.session.register(queue.iter().map(|id| Song { id: id.to_string(), ..song() }).collect());
-        c.core.session.set(queue.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
+        c.core.session.set(queue.iter().map(|id| id.to_string()).map(ItemKey::own).collect(), Some(0), false, None);
         block(c.lyrics_prefetch());
         assert!(fake.asked().is_empty(), "no view open: nothing asked");
         (0..3).for_each(|_| fake.answer(SYNCED));
@@ -630,7 +638,7 @@ pub(crate) mod tests {
         c.settings().edit_by_name("lyricsOnline", "false");
         c.lyrics_view(true);
         c.core.session.register(vec![Song { id: "first".into(), ..song() }, Song { id: "second".into(), ..song() }]);
-        c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
+        c.core.session.set(vec![ItemKey::own("now"), ItemKey::own("first")], Some(0), false, None);
         let mut first = Box::pin(c.lyrics_prefetch());
         let mut cx = Context::from_waker(Waker::noop());
         assert!(first.as_mut().poll(&mut cx).is_pending());
@@ -638,16 +646,16 @@ pub(crate) mod tests {
         // Asking again for the same entry starts no second request.
         block(c.lyrics_prefetch());
         assert_eq!(active.load(Ordering::SeqCst), 1);
-        c.core.session.set(vec!["now".into(), "second".into()], Some(0), false, None);
+        c.core.session.set(vec![ItemKey::own("now"), ItemKey::own("second")], Some(0), false, None);
         fake.answer(SYNCED);
         block(c.lyrics_prefetch());
         assert!(first.as_mut().poll(&mut cx).is_ready());
         assert_eq!(active.load(Ordering::SeqCst), 0, "the obsolete network future was dropped");
         let shown = Arc::new(Screen::default());
-        block(c.lyrics_for("second".into(), shown.clone())).unwrap();
+        block(c.lyrics_for(ItemKey::own("second"), shown.clone())).unwrap();
         assert_eq!(shown.0.lock()[0].lyrics.lines[0].text, "timed");
         assert_eq!(fake.asked().len(), 1);
-        c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
+        c.core.session.set(vec![ItemKey::own("now"), ItemKey::own("first")], Some(0), false, None);
         let mut cancelled = Box::pin(c.lyrics_prefetch());
         assert!(cancelled.as_mut().poll(&mut cx).is_pending());
         drop(cancelled);
@@ -659,7 +667,7 @@ pub(crate) mod tests {
         assert_eq!(active.load(Ordering::SeqCst), 0);
         let mut removed = Box::pin(c.lyrics_prefetch());
         assert!(removed.as_mut().poll(&mut cx).is_pending());
-        c.core.session.set(vec!["now".into()], Some(0), false, None);
+        c.core.session.set(vec![ItemKey::own("now")], Some(0), false, None);
         block(c.lyrics_prefetch());
         assert!(removed.as_mut().poll(&mut cx).is_ready());
         assert_eq!(active.load(Ordering::SeqCst), 0, "removing the upcoming entry cancels its request");
@@ -673,7 +681,7 @@ pub(crate) mod tests {
         c.core.session.register(vec![Song { id: "lf1".into(), title: "In Order One".into(), ..song() }, Song { id: "lf2".into(), title: "In Order Two".into(), ..song() }]);
         fake.answer(SYNCED);
         let page = Arc::new(Screen::default());
-        block(c.lyrics_for("lf1".into(), page.clone())).unwrap();
+        block(c.lyrics_for(ItemKey::own("lf1"), page.clone())).unwrap();
         let got = page.0.lock().clone();
         assert_eq!(got.len(), 1);
         assert_eq!((got[0].origin.clone(), got[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Server, "timed"));
@@ -682,12 +690,12 @@ pub(crate) mod tests {
         c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
         fake.answer(SYNCED);
         let again = Arc::new(Screen::default());
-        block(c.lyrics_for("lf1".into(), again.clone())).unwrap();
+        block(c.lyrics_for(ItemKey::own("lf1"), again.clone())).unwrap();
         assert_eq!(again.0.lock().len(), 1);
         // No server lyrics: shown once, at the end.
         fake.answer(NONE);
         let none = Arc::new(Screen::default());
-        block(c.lyrics_for("lf2".into(), none.clone())).unwrap();
+        block(c.lyrics_for(ItemKey::own("lf2"), none.clone())).unwrap();
         let got = none.0.lock().clone();
         assert_eq!(got.len(), 1);
         assert!(got[0].lyrics.lines.is_empty() && got[0].origin == LyricsOrigin::Server);
@@ -734,7 +742,7 @@ pub(crate) mod tests {
         let before = fake.asked().len();
         fake.fail(FailureKind::Timeout);
         let screen = Arc::new(Immediate { fake: fake.clone(), shown: Mutex::new(Vec::new()) });
-        block(c.lyrics_found(s.id, &lrclib(), screen.clone())).unwrap();
+        block(c.lyrics_found(ItemKey::own(s.id), &lrclib(), screen.clone())).unwrap();
         let shown = screen.shown.lock();
         assert_eq!(shown[0].0.origin, LyricsOrigin::Lrclib);
         assert_eq!(shown[0].1, before, "cached words must arrive before attempting the slow server request");
@@ -752,10 +760,10 @@ pub(crate) mod tests {
         fake.answer(r#"{"statusCode":404}"#);
         fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
         let first = Arc::new(Screen::default());
-        block(c.lyrics_found(s.id.clone(), &lrclib(), first.clone())).unwrap();
+        block(c.lyrics_found(ItemKey::own(s.id.clone()), &lrclib(), first.clone())).unwrap();
         assert_eq!(first.0.lock().last().map(|p| p.origin.clone()), Some(LyricsOrigin::Lrclib));
         let again = Arc::new(Screen::default());
-        block(c.lyrics_found(s.id, &lrclib(), again.clone())).unwrap();
+        block(c.lyrics_found(ItemKey::own(s.id), &lrclib(), again.clone())).unwrap();
         let origins: Vec<_> = again.0.lock().iter().map(|p| p.origin.clone()).collect();
         assert_eq!(origins, [LyricsOrigin::Lrclib], "the server's plain words must not show first");
     }
@@ -771,20 +779,20 @@ pub(crate) mod tests {
         c.core.cache_put(format!("page:lyrics/{}", s.id), NONE.as_bytes().to_vec()).unwrap();
         let shown = || {
             let screen = Arc::new(Screen::default());
-            block(c.lyrics_found(s.id.clone(), &lrclib(), screen.clone())).unwrap();
+            block(c.lyrics_found(ItemKey::own(s.id.clone()), &lrclib(), screen.clone())).unwrap();
             let first = screen.0.lock()[0].clone();
             assert_eq!(first.origin, LyricsOrigin::Lrclib);
             first
         };
         let pick = shown();
         assert_eq!(pick.lyrics.timing, LyricsTiming::NotChecked);
-        let once = c.core.lyrics_nudge(s.id.clone(), pick.clone(), 1);
-        let twice = c.core.lyrics_nudge(s.id.clone(), once, 1);
+        let once = c.core.lyrics_nudge(ItemKey::own(s.id.clone()), pick.clone(), 1);
+        let twice = c.core.lyrics_nudge(ItemKey::own(s.id.clone()), once, 1);
         assert_eq!(twice.lyrics.timing, LyricsTiming::Yours { ms: 2 * nori_look::lyrics::NUDGE_STEP_MS, automatic: None });
         assert_eq!(shown().lyrics.timing, twice.lyrics.timing, "shown again, still yours");
-        assert_eq!(c.core.lyrics_yours(&s.id, &LyricsPick { origin: LyricsOrigin::Netease, ..pick.clone() }), None, "another source's words");
-        assert_eq!(c.core.lyrics_yours("other", &pick), None, "another song");
-        assert_eq!(c.core.lyrics_nudge(s.id.clone(), shown(), 0).lyrics.timing, LyricsTiming::NotChecked);
+        assert_eq!(c.core.lyrics_yours(&crate::Keyed::key(&s), &LyricsPick { origin: LyricsOrigin::Netease, ..pick.clone() }), None, "another source's words");
+        assert_eq!(c.core.lyrics_yours(&ItemKey::own("other"), &pick), None, "another song");
+        assert_eq!(c.core.lyrics_nudge(ItemKey::own(s.id.clone()), shown(), 0).lyrics.timing, LyricsTiming::NotChecked);
         assert_eq!(shown().lyrics.timing, LyricsTiming::NotChecked, "reset is forgotten for good");
     }
 
@@ -873,7 +881,7 @@ pub(crate) mod tests {
             c.core.session.register(vec![s]);
             fake.answer(NONE);
             fake.answer(&answer);
-            block(c.lyrics_found(id.into(), &lrclib(), Arc::new(Screen::default()))).unwrap();
+            block(c.lyrics_found(ItemKey::own(id), &lrclib(), Arc::new(Screen::default()))).unwrap();
         };
         show("unheard");
         assert_eq!(sung("unheard"), Some((1, 2)), "no voice to hear the words against");
@@ -897,28 +905,28 @@ pub(crate) mod tests {
         let s = Song { id: "sync2".into(), title: "Offset".into(), duration: secs, ..song() };
         let other = Song { id: "other".into(), ..s.clone() };
         c.core.session.register(vec![s.clone(), other.clone()]);
-        c.core.session.set(vec![s.id.clone()], Some(0), false, None);
+        c.core.session.set(vec![ItemKey::own(s.id.clone())], Some(0), false, None);
         c.core.session.window();
         fake.answer(NONE);
         fake.answer(&answer);
         let screen = Arc::new(Screen::default());
         let asked = lrclib();
         let mut cx = Context::from_waker(Waker::noop());
-        let mut lookup = Box::pin(c.lyrics_found(s.id.clone(), &asked, screen.clone()));
+        let mut lookup = Box::pin(c.lyrics_found(ItemKey::own(s.id.clone()), &asked, screen.clone()));
         assert!(lookup.as_mut().poll(&mut cx).is_pending(), "waits for the measurement");
         assert_eq!(screen.0.lock().last().map(|p| p.lyrics.timing), Some(LyricsTiming::NotChecked));
-        c.core.analysis_finish(&s.id, a).unwrap().expect("stored");
+        c.core.analysis_finish(&crate::Keyed::key(&s), a).unwrap().expect("stored");
         assert!(lookup.as_mut().poll(&mut cx).is_ready());
         let timing = screen.0.lock().last().unwrap().lyrics.timing;
         assert!(matches!(timing, LyricsTiming::Automatic { ms } if (ms - 1200).abs() < 150), "{timing:?}");
 
-        c.core.session.set(vec![other.id.clone()], Some(0), false, None);
+        c.core.session.set(vec![ItemKey::own(other.id.clone())], Some(0), false, None);
         c.core.session.window();
         fake.answer(NONE);
         fake.answer(&answer);
-        let mut lookup = Box::pin(c.lyrics_found(other.id.clone(), &asked, screen.clone()));
+        let mut lookup = Box::pin(c.lyrics_found(ItemKey::own(other.id.clone()), &asked, screen.clone()));
         assert!(lookup.as_mut().poll(&mut cx).is_pending());
-        c.core.session.set(vec![s.id.clone()], Some(0), false, None);
+        c.core.session.set(vec![ItemKey::own(s.id.clone())], Some(0), false, None);
         c.core.session.window();
         assert!(lookup.as_mut().poll(&mut cx).is_ready(), "out of the play window: no longer waited for");
     }
@@ -929,7 +937,7 @@ pub(crate) mod tests {
         let kept = Song { id: "dl-lyr".into(), title: "Paper Lanterns".into(), artist: "The Invented".into(), album: "Nowhere".into(), duration: 200, ..Default::default() };
         let other = Song { id: "st-lyr".into(), title: "Streamed Only".into(), ..kept.clone() };
         c.core.download_queue(vec![kept.clone()]).unwrap();
-        c.core.download_done("dl-lyr".into()).unwrap();
+        c.core.download_done(ItemKey::own("dl-lyr")).unwrap();
         for s in [&kept, &other] {
             fake.answer(r#"{"statusCode":404}"#);
             fake.answer(r#"[{"duration":200,"syncedLyrics":"[00:02.00]a line made up\n[01:00.00]another made up line\n[02:00.00]a third invented one\n[03:00.00]and the last of them"}]"#);
@@ -946,7 +954,7 @@ pub(crate) mod tests {
         assert_eq!((offline[0].origin.clone(), offline[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Lrclib, "a line made up"));
         assert_eq!(fake.asked().len(), asked);
         assert!(run(&c, &other, false, false, &lrclib())[0].lyrics.lines.is_empty(), "streamed song's cleared");
-        c.core.download_remove("dl-lyr".into()).unwrap();
+        c.core.download_remove(ItemKey::own("dl-lyr")).unwrap();
         c.core.lyrics_cache_clear();
         assert_eq!(c.core.lyrics_cache_bytes(), 0, "download deleted");
 
@@ -957,7 +965,7 @@ pub(crate) mod tests {
         let asked = LyricsLookup { services: vec![LyricsService::Lrclib, LyricsService::LyricsPlus], ..lrclib() };
         c.core.session.register(vec![s.clone()]);
         c.core.download_queue(vec![s.clone()]).unwrap();
-        c.core.download_done(s.id.clone()).unwrap();
+        c.core.download_done(ItemKey::own(s.id.clone())).unwrap();
         // At download: none on the server, line-timed LRCLIB, LyricsPlus unreachable.
         fake.answer(NONE);
         fake.answer(r#"{"statusCode":404}"#);
@@ -989,7 +997,7 @@ pub(crate) mod tests {
         let (c, fake) = setup();
         let s = Song { id: "dl-known".into(), title: "Kept Here".into(), artist: "The Invented".into(), duration: 180, ..Default::default() };
         c.core.download_queue(vec![s.clone()]).unwrap();
-        c.core.download_done(s.id.clone()).unwrap();
+        c.core.download_done(ItemKey::own(s.id.clone())).unwrap();
         let got = block(c.song_of(s.id.clone())).unwrap();
         assert_eq!((got.title.as_str(), got.duration), ("Kept Here", 180));
         assert!(fake.asked().is_empty(), "{:?}", fake.asked());
@@ -1009,7 +1017,7 @@ pub(crate) mod tests {
 
     fn open(c: &Client, fake: &Arc<Fake>, id: &str, asked: &LyricsLookup) -> Vec<(usize, LyricsPick)> {
         let seen = Arc::new(Seen { fake: fake.clone(), picks: Mutex::new(Vec::new()) });
-        block(c.lyrics_found(id.into(), asked, seen.clone())).unwrap();
+        block(c.lyrics_found(ItemKey::own(id), asked, seen.clone())).unwrap();
         let picks = seen.picks.lock().clone();
         picks
     }
@@ -1023,7 +1031,7 @@ pub(crate) mod tests {
         fake.answer(SYNCED);
         fake.answer(SYNCED);
         for id in ["ext-deezer-7", "dla-1", "dla-2"] {
-            block(c.lyrics_for_download(id.into()));
+            block(c.lyrics_for_download(ItemKey::own(id)));
         }
         let lyrics: Vec<String> = fake.asked().into_iter().filter(|u| u.contains("getLyricsBySongId")).collect();
         assert_eq!(lyrics.len(), 3, "{lyrics:?}");

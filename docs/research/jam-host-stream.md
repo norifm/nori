@@ -8,7 +8,7 @@ built; "As built" below says where the build differs from the plan.
 ## Where things stand
 
 - LAN jams are the jams of profiles without a Subsonic server: `jam_open` opens one only when
-  `Core::serverless()` (crates/core/src/remote.rs). In practice a LAN jam's host is a plugin provider's
+  `Core::lan_only()` (crates/core/src/remote.rs). In practice a LAN jam's host is a plugin provider's
   profile. Subsonic hosts jam through octo-fiesta's relay; nothing here changes those.
 - The LAN door (crates/remote/src/lan/door.rs) is hand-written HTTP/1.1: a thread per connection, signed
   requests (HMAC over method, target and body), JSON answers held in memory, no ranges, 1 MiB bodies, 32

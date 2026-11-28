@@ -1,7 +1,7 @@
 //! The offline bridge: while the server is unreachable and the next song is not downloaded, play
 //! downloads, then resume the queue where it was parked. This picks the songs.
 
-use nori_model::Song;
+use nori_model::{ItemKey, Keyed, Song};
 use nori_player::queue::shuffle;
 
 /// Downloads added per bridge batch.
@@ -14,13 +14,13 @@ fn score(seed: Option<&Song>, s: &Song) -> i32 {
         if !seed.artist.trim().is_empty() && s.artist.to_lowercase() == seed.artist.to_lowercase() {
             v += 4;
         }
-        if seed.album_id.is_some() && s.album_id == seed.album_id {
+        if seed.album_id.is_some() && s.album_id == seed.album_id && s.source == seed.source {
             v += 3;
         }
         if seed.genre.as_deref().is_some_and(|g| !g.trim().is_empty()) && s.genre == seed.genre {
             v += 2;
         }
-        if seed.artist_id.is_some() && s.artist_id == seed.artist_id {
+        if seed.artist_id.is_some() && s.artist_id == seed.artist_id && s.source == seed.source {
             v += 2;
         }
     }
@@ -31,10 +31,10 @@ fn score(seed: Option<&Song>, s: &Song) -> i32 {
 }
 
 /// Up to `n` of `pool`, most similar first (shuffled among equals), excluding `exclude` and provider songs.
-pub fn pick(seed: Option<&Song>, pool: &[Song], exclude: &[String], n: usize, rng_seed: u64) -> Vec<Song> {
+pub fn pick(seed: Option<&Song>, pool: &[Song], exclude: &[ItemKey], n: usize, rng_seed: u64) -> Vec<Song> {
     let mut scored: Vec<(i32, &Song)> = pool
         .iter()
-        .filter(|s| !exclude.contains(&s.id) && !s.is_provider())
+        .filter(|s| !exclude.contains(&s.key()) && !s.is_provider())
         .map(|s| (score(seed, s), s))
         .collect();
     // Shuffle, then stable sort: equal scores stay shuffled.
@@ -55,10 +55,15 @@ mod tests {
     fn pick_by_similarity() {
         let seed = song("s", "Radiohead", "ok", false);
         let pool = [song("a", "Muse", "x", false), song("b", "radiohead", "kid", false), song("c", "Radiohead", "ok", false), song("d", "Muse", "y", true), song("q", "Radiohead", "ok", false)];
-        let p = pick(Some(&seed), &pool, &["q".to_string()], 3, 7);
+        let p = pick(Some(&seed), &pool, &[ItemKey::own("q")], 3, 7);
         let ids: Vec<&str> = p.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(&ids[..2], &["c", "b"], "artist and album, then artist");
         assert_eq!(ids[2], "d", "then starred");
         assert!(!ids.contains(&"q"));
+
+        // A queued id is left out only from its own source; another source's album is not the seed's.
+        let theirs = |id: &str, album: &str| Song { source: Some("nd2".into()), ..song(id, "Muse", album, false) };
+        let p = pick(Some(&song("s", "Muse", "ok", false)), &[theirs("q", "ok"), song("q", "Muse", "ok", false), song("o", "Muse", "ok", false)], &[ItemKey::own("q")], 3, 7);
+        assert_eq!(p.iter().map(Keyed::key).collect::<Vec<_>>(), [ItemKey::own("o"), theirs("q", "ok").key()], "the own album first");
     }
 }

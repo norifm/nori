@@ -237,7 +237,7 @@ impl Cli {
 
     fn queue(&mut self, songs: Vec<Song>, start_ms: i64) {
         self.core.session.register(songs.clone());
-        self.core.session.set(songs.iter().map(|s| s.id.clone()).collect(), Some(0), false, None);
+        self.core.session.set(songs.iter().map(nori_core::Keyed::key).collect(), Some(0), false, None);
         *self.songs.lock().unwrap() = songs;
         self.engine.queue_changed();
         self.engine.play_at(0, start_ms);
@@ -379,7 +379,7 @@ pub fn main(argv: Vec<String>) {
         loop {
             match events.recv_timeout(Duration::from_secs(600)) {
                 Ok(Event::Song { index, .. }) => println!("now: {}", title_at(index)),
-                Ok(Event::Error { id, message }) => println!("error: {id} {message}"),
+                Ok(Event::Error { id, message }) => println!("error: {} {message}", id.map(|k| k.to_string()).unwrap_or_default()),
                 Ok(Event::State(State::Ended)) => break,
                 Ok(Event::State(State::Idle)) if cli.songs.lock().unwrap().is_empty() => break,
                 Ok(_) => {}
@@ -415,7 +415,7 @@ pub fn main(argv: Vec<String>) {
                 Event::Song { index, .. } => println!("now: {}", shown(index)),
                 Event::State(s) => println!("{s:?}"),
                 Event::Position { index, ms, .. } => println!("  {} at {}", shown(index), clock(ms)),
-                Event::Error { id, message } => println!("error: {id} {message}"),
+                Event::Error { id, message } => println!("error: {} {message}", id.map(|k| k.to_string()).unwrap_or_default()),
                 Event::Output { name } => println!("output: {name}"),
                 Event::Stopped { .. } => println!("stopped"),
                 Event::Buffering(on) => println!("{}", if on { "buffering" } else { "playing again" }),

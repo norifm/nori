@@ -2,6 +2,7 @@
 //! transition, and an analysis refined. Each gets nori's answer and may give its own; nori checks
 //! what it gives here and keeps its own answer when it doesn't hold.
 
+use nori_model::ItemKey;
 use nori_player::types::{BassSwap, Sweep, TrackAnalysis, TransitionKind, TransitionPlan};
 
 /// The kinds of transition a plugin may plan.
@@ -45,11 +46,11 @@ pub struct Refined {
 /// Where plugins answer for AutoMix. None everywhere keeps nori's answers.
 pub trait Mixing: Send + Sync {
     /// Whether songs `outgoing` and `incoming` mix at all; nori's answer is `nori` (its same-album rule).
-    fn mixes(&self, outgoing: &str, incoming: &str, nori: bool) -> Option<bool>;
+    fn mixes(&self, outgoing: &ItemKey, incoming: &ItemKey, nori: bool) -> Option<bool>;
     /// The transition out of `outgoing` into `incoming`, given their analyses and nori's plan.
-    fn plan(&self, outgoing: &str, incoming: &str, out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, nori: &TransitionPlan) -> Option<Proposal>;
+    fn plan(&self, outgoing: &ItemKey, incoming: &ItemKey, out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, nori: &TransitionPlan) -> Option<Proposal>;
     /// Song `song`'s analysis as a plugin refines it.
-    fn refine(&self, song: &str, analysis: &TrackAnalysis) -> Option<Refined>;
+    fn refine(&self, song: &ItemKey, analysis: &TrackAnalysis) -> Option<Refined>;
 }
 
 /// The fade a cut takes, ms.

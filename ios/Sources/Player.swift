@@ -265,7 +265,7 @@ final class PlayerCard: UIViewController {
         album.text = song.album
         album.isHidden = song.album.isEmpty
         paintSeal()
-        if panel == .lyrics && lyricsSong != song.id { show(.lyrics) }
+        if panel == .lyrics && lyricsSong != song.key { show(.lyrics) }
         if paintedCover != song.cover {
             paintedCover = song.cover
             cover.show(song.cover, points: PlayerCard.coverPoints)
@@ -425,7 +425,7 @@ final class PlayerCard: UIViewController {
         case .art: break
         case .lyrics:
             if let song = Core.shared.now.song {
-                lyricsSong = song.id
+                lyricsSong = song.key
                 child = LyricsPanel(song: song, back: back) { [weak self] in self?.moreTapped() }
             }
         case .queue:
@@ -537,7 +537,7 @@ final class LyricsPanel: UIViewController, PlayerPanel {
         self.song = song
         self.back = back
         menu = more
-        lines = LyricsCard(song: song.id)
+        lines = LyricsCard(song: song.key)
         super.init(nibName: nil, bundle: nil)
     }
 

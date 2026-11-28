@@ -1,5 +1,6 @@
 package dev.nori.music.playback
 
+import dev.nori.music.ffi.model.ItemKey
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSink
@@ -99,8 +100,8 @@ internal class MeasuringSink(private val analyses: Long) : DataSink {
  * What one measuring shelf asks of the platform, from its own thread: where a song's bytes are ([find]), and
  * that one was measured ([told]). Handed to the core with the shelf, so its calls reach their own owner.
  */
-internal class MeasureBridge(private val find: (String) -> Array<String>?, private val told: () -> Unit = {}) {
-    fun whole(id: String): Array<String>? = find(id)
+internal class MeasureBridge(private val find: (ItemKey) -> Array<String>?, private val told: () -> Unit = {}) {
+    fun whole(source: String?, id: String): Array<String>? = find(ItemKey(source, id))
     fun measured() = told()
 }
 
@@ -146,7 +147,7 @@ class AutoMixPrefetch(
      * [id]'s bytes if they are all on the device: its cache key, then the files that hold them in order -
      * a download's, or else a streamed copy's. Null while any of it is missing.
      */
-    private fun whole(id: String): Array<String>? =
+    private fun whole(id: ItemKey): Array<String>? =
         files(sources.downloadCache, sources.downloadKey(id)) ?: runCatching { sources.streamKey(id) }.getOrNull()?.let { files(sources.streamCache, it) }
 
     internal companion object {

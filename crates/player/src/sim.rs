@@ -11,6 +11,7 @@ use crate::automix::analysis::Analyzer;
 use crate::automix::plan;
 use crate::decode::{Codec, Decoder, MP3_DECODER_DELAY};
 use crate::engine::{Host, Plan};
+use crate::key::ItemKey;
 use crate::pcm::{Encoding, Format};
 use crate::pipeline::{self, Reading as _, Remake, Sink, Songs};
 use crate::playlist::Playlist;
@@ -241,10 +242,10 @@ impl Track {
 
     fn window_song(&self) -> WindowSong {
         WindowSong {
-            id: self.id.clone(),
+            id: ItemKey::own(&*self.id),
             title: self.id.clone(),
             duration_ms: self.listed_ms.unwrap_or_else(|| self.duration_ms()),
-            album_id: self.album.clone(),
+            album_id: self.album.as_deref().map(ItemKey::own),
             disc: 1,
             track: self.number,
             tag_bpm: 0.0,
@@ -396,7 +397,8 @@ impl DerefMut for Tracks {
 impl Songs for Tracks {
     type Reading = Reading;
 
-    fn open(&mut self, id: &str, from_ms: i64) -> Result<Reading, String> {
+    fn open(&mut self, key: &ItemKey, from_ms: i64) -> Result<Reading, String> {
+        let id = key.id.as_str();
         if self.broken.iter().any(|b| b == id) {
             return Err(format!("{id} is broken"));
         }
@@ -407,12 +409,12 @@ impl Songs for Tracks {
         Ok(r)
     }
 
-    fn about(&self, id: &str) -> WindowSong {
-        self.get(id).window_song()
+    fn about(&self, id: &ItemKey) -> WindowSong {
+        self.get(&id.id).window_song()
     }
 
-    fn upcoming(&mut self, id: &str) {
-        self.ahead.push(id.to_string());
+    fn upcoming(&mut self, id: &ItemKey) {
+        self.ahead.push(id.id.clone());
     }
 }
 
@@ -741,7 +743,7 @@ impl App {
 
     /// Stores a finished analysis if it covers the whole song.
     fn store(&mut self, id: &str, a: Analyzer, frames: u64, rate: u32, how: &str) {
-        let expected = self.window.iter().find(|s| s.id == id).map_or(0, |s| s.duration_ms);
+        let expected = self.window.iter().find(|s| s.id.id == id).map_or(0, |s| s.duration_ms);
         let heard_ms = (frames * 1000 / rate.max(1) as u64) as i64;
         let mut a = a;
         if !whole_song(heard_ms, expected) || a.samples() < (a.rate() * 30.0) as u64 {
@@ -761,12 +763,13 @@ impl Default for App {
 }
 
 impl Host for App {
-    fn plan_for(&mut self, outgoing_id: &str) -> Option<Plan> {
-        let chosen = match pick(&self.prefs, self.transitions_off, &self.window, outgoing_id, self.shuffling) {
+    fn plan_for(&mut self, outgoing: &ItemKey) -> Option<Plan> {
+        let outgoing_id = outgoing.id.as_str();
+        let chosen = match pick(&self.prefs, self.transitions_off, &self.window, outgoing, self.shuffling) {
             Err(skip) => {
                 let repeated = self.none.as_ref().is_some_and(|(id, s)| *s == Some(skip) && id == outgoing_id);
                 if !repeated {
-                    self.log.push(format!("planFor: {}", skip.describe(outgoing_id)));
+                    self.log.push(format!("planFor: {}", skip.describe(outgoing)));
                 }
                 self.none = Some((outgoing_id.to_string(), Some(skip)));
                 return None;
@@ -774,7 +777,7 @@ impl Host for App {
             Ok(p) => p,
         };
         let (o, n) = (&self.window[chosen.out], &self.window[chosen.next]);
-        let (a, b) = if self.prefs.auto_mix { (self.analyses.get(&o.id), self.analyses.get(&n.id)) } else { (None, None) };
+        let (a, b) = if self.prefs.auto_mix { (self.analyses.get(&o.id.id), self.analyses.get(&n.id.id)) } else { (None, None) };
         let t = plan::plan(a, b, o.duration_ms, n.duration_ms, &chosen.settings);
         let p = engine_plan(&t, &n.id);
         let line = match &p {
@@ -789,15 +792,15 @@ impl Host for App {
         p
     }
 
-    fn wants_analysis(&mut self, song_id: &str) -> Option<u64> {
-        if !self.prefs.auto_mix || !self.measure_playing || self.analyses.contains_key(song_id) {
+    fn wants_analysis(&mut self, song: &ItemKey) -> Option<u64> {
+        if !self.prefs.auto_mix || !self.measure_playing || self.analyses.contains_key(&song.id) {
             return None;
         }
-        Some(self.window.iter().find(|s| s.id == song_id).map_or(0, |s| s.duration_ms.max(0) as u64))
+        Some(self.window.iter().find(|s| s.id == *song).map_or(0, |s| s.duration_ms.max(0) as u64))
     }
 
-    fn analysed(&mut self, song_id: &str, analyzer: Analyzer, _channels: usize, frames: u64, rate: u32) {
-        self.store(song_id, analyzer, frames, rate, "");
+    fn analysed(&mut self, song: &ItemKey, analyzer: Analyzer, _channels: usize, frames: u64, rate: u32) {
+        self.store(&song.id, analyzer, frames, rate, "");
     }
 
     fn log(&mut self, message: &str) {
@@ -818,17 +821,17 @@ impl pipeline::App for App {
         self.prefs.auto_mix
     }
 
-    fn window<S: Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+    fn window<S: Songs>(&mut self, songs: &S, ids: &[ItemKey], shuffling: bool) {
         self.window = ids.iter().map(|id| songs.about(id)).collect();
         self.shuffling = shuffling;
     }
 
     /// Analyses the unmeasured `ids` whole.
-    fn measure_ahead<S: Songs>(&mut self, songs: &mut S, ids: &[String]) {
+    fn measure_ahead<S: Songs>(&mut self, songs: &mut S, ids: &[ItemKey]) {
         if !self.measure_ahead {
             return;
         }
-        let missing: Vec<&String> = ids.iter().filter(|id| !self.analyses.contains_key(*id)).collect();
+        let missing: Vec<&ItemKey> = ids.iter().filter(|id| !self.analyses.contains_key(&id.id)).collect();
         self.log.push(format!("measuring ahead: {} of {} unmeasured, 0 not on the device yet", missing.len(), ids.len()));
         for id in missing {
             let Ok(mut r) = songs.open(id, 0) else { continue };
@@ -840,7 +843,7 @@ impl pipeline::App for App {
             }
             let frames = a.samples();
             let rate = a.rate() as u32;
-            self.store(id, a, frames, rate, " ahead");
+            self.store(&id.id, a, frames, rate, " ahead");
         }
     }
 
@@ -856,7 +859,7 @@ impl pipeline::App for App {
     }
 
     fn gain(&mut self, list: &crate::playlist::Playlist, index: usize) -> f32 {
-        self.gains.get(&list.ids()[index]).copied().unwrap_or(1.0)
+        self.gains.get(&list.ids()[index].id).copied().unwrap_or(1.0)
     }
 
     fn spliced(&mut self, what: &str, at: pipeline::Splice) {
@@ -872,7 +875,7 @@ impl Player {
     /// A queue of `tracks`, idle.
     pub fn new(tracks: Vec<Track>) -> Player {
         let mut queue = Playlist::default();
-        queue.set(tracks.iter().map(|t| t.id.clone()).collect(), Some(0), false, 0);
+        queue.set(tracks.iter().map(|t| ItemKey::own(&*t.id)).collect(), Some(0), false, 0);
         Player::build(Tracks { list: tracks, ..Tracks::default() }, queue, App::new(), AudioTrack::new())
     }
 
@@ -886,7 +889,7 @@ impl Player {
     /// Shuffled with `seed`, starting where that order starts.
     pub fn shuffled(tracks: Vec<Track>, seed: u64) -> Player {
         let mut p = Player::new(tracks);
-        let ids = p.tracks.iter().map(|t| t.id.clone()).collect();
+        let ids = p.tracks.iter().map(|t| ItemKey::own(&*t.id)).collect();
         p.queue.live.set(ids, None, true, seed);
         p.queue_changed();
         p
@@ -894,7 +897,7 @@ impl Player {
 
     /// The track at list index `i`.
     pub fn track(&self, i: usize) -> &Track {
-        self.tracks.get(&self.queue.read(|q| q.ids()[i].clone()))
+        self.tracks.get(&self.queue.read(|q| q.ids()[i].id.clone()))
     }
 
     /// New transition settings: replan, and measure ahead with AutoMix on.

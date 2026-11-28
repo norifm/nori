@@ -16,7 +16,7 @@ class Scrobbler(private val nori: Nori, private val scope: CoroutineScope) {
     fun onPlaying(playing: Boolean) = nori.session.scrobblePlaying(playing, SystemClock.elapsedRealtime())
 
     /** The player's song changed to [id] ([why]). */
-    fun onTrack(id: String?, why: dev.nori.music.ffi.queue.TrackChange, playing: Boolean) {
+    fun onTrack(id: dev.nori.music.ffi.model.ItemKey?, why: dev.nori.music.ffi.queue.TrackChange, playing: Boolean) {
         val wall = System.currentTimeMillis()
         val send = nori.session.scrobbleTrack(id, why, playing, SystemClock.elapsedRealtime(), wall, java.util.TimeZone.getDefault().getOffset(wall))
         if (send.counted == null && send.playing == null) return

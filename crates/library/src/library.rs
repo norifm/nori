@@ -1,7 +1,7 @@
 //! Small decisions every client shares: the local day, the random-songs fallback of a mix, and what
 //! resuming the server's queue plays.
 
-use nori_model::{Album, PlayQueue, Song};
+use nori_model::{Album, ItemKey, PlayQueue, Song};
 
 /// Finished downloads, grouped by album in newest-download order, with unfiled songs kept separately.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -134,19 +134,20 @@ fn place(songs: &[Song], index: u32, position_ms: u64) -> Option<QueuePlace> {
 /// The queue `saved` on the server by the app named `by`, offered to a device showing its song `here`
 /// (or nothing) unless the offer does not stand ([`offer_stands`]), it stands where this device left it
 /// (`ours`), or its song was offered before (`seen`), wherever it has got to since.
-pub fn queue_offer(saved: PlayQueue, by: &str, here: Option<&str>, playing: bool, ours: Option<&QueuePlace>, seen: Option<&QueuePlace>) -> Option<QueueOffer> {
+pub fn queue_offer(saved: PlayQueue, by: &str, here: Option<&ItemKey>, playing: bool, ours: Option<&QueuePlace>, seen: Option<&QueuePlace>) -> Option<QueueOffer> {
     let at = place(&saved.songs, saved.index, saved.position_ms)?;
-    if !offer_stands(&at.song, here.map(String::from), playing) || ours == Some(&at) || seen.is_some_and(|s| s.song == at.song) {
+    if !offer_stands(&at.song, here, playing) || ours == Some(&at) || seen.is_some_and(|s| s.song == at.song) {
         return None;
     }
     let by = if by == nori_net::api::CLIENT { QueueBy::Nori } else { QueueBy::App { name: by.to_string() } };
     Some(QueueOffer { by, songs: saved.songs, index: saved.index, position_ms: saved.position_ms })
 }
 
-/// Whether an offer of a queue at the song `offered` is still worth showing on a device that shows the song
-/// `here` (its own, or another device's it controls) and is `playing` or not.
-pub(crate) fn offer_stands(offered: &str, here: Option<String>, playing: bool) -> bool {
-    !playing && here.as_deref() != Some(offered)
+/// Whether an offer of a queue at the server's song `offered` is still worth showing on a device that shows
+/// the song `here` (its own, or another device's it controls) and is `playing` or not. Another source's
+/// song is none of the server's, whatever its id.
+pub(crate) fn offer_stands(offered: &str, here: Option<&ItemKey>, playing: bool) -> bool {
+    !playing && here.and_then(ItemKey::own_id) != Some(offered)
 }
 
 /// The favourites handed to the mixes from the stored answer, and what `mix_favourites_refresh` needs.
@@ -196,10 +197,13 @@ mod tests {
         let web = offer("NavidromeUI", None, false, None, None).unwrap();
         assert_eq!((web.by.clone(), web.index, web.position_ms), (QueueBy::App { name: "NavidromeUI".into() }, 1, 1200));
         assert_eq!(web.place(), Some(at.clone()));
-        assert_eq!(offer("nori", Some("a"), false, Some(&elsewhere), None).map(|o| o.by), Some(QueueBy::Nori), "another nori, further on");
+        let (a, b) = (ItemKey::own("a"), ItemKey::own("b"));
+        let theirs = ItemKey { source: Some("acct2".into()), id: "b".into() };
+        assert_eq!(offer("nori", Some(&a), false, Some(&elsewhere), None).map(|o| o.by), Some(QueueBy::Nori), "another nori, further on");
+        assert!(offer("nori", Some(&theirs), false, None, None).is_some(), "another source's b is not its song");
         for (why, here, playing, ours, seen) in [
             ("something plays", None, true, None, None),
-            ("its song is here", Some("b"), false, None, None),
+            ("its song is here", Some(&b), false, None, None),
             ("this device left it", None, false, Some(&at), None),
             ("offered before", None, false, None, Some(&at)),
             ("offered before, played on", None, false, None, Some(&elsewhere)),

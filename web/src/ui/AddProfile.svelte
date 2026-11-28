@@ -7,7 +7,7 @@
   import { W } from "../words";
   import Icon from "./Icon.svelte";
 
-  let { close, added }: { close: () => void; added: () => void } = $props();
+  let { close, added, forProfile }: { close: () => void; added: () => void; forProfile?: string } = $props();
   let dialog = $state<HTMLDialogElement>();
   $effect(() => dialog?.showModal());
   /** The provider chosen; null on the choice. */
@@ -25,7 +25,9 @@
     busy = true;
     failed = "";
     try {
-      await ask("login", url.trim().replace(/\/$/, ""), user.trim(), password);
+      const addr = url.trim().replace(/\/$/, "");
+      if (forProfile) await ask("login_source", forProfile, addr, user.trim(), password);
+      else await ask("login", addr, user.trim(), password);
       added();
     } catch (err) {
       failed = W.signInFailed(String((err as Error).message ?? err));
@@ -38,7 +40,7 @@
     if (!picked) return;
     busy = true;
     try {
-      await folder.add(picked);
+      await folder.add(picked, forProfile);
       added();
     } catch (err) {
       failed = String((err as Error).message ?? err);

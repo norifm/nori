@@ -1,7 +1,7 @@
 //! The undo of the user's last removal from the queue, a single song or a clear, for [`UNDO_MS`].
 
 use nori_db as db;
-use nori_model::Song;
+use nori_model::{ItemKey, Song};
 
 use crate::playlist::QueueChange;
 use crate::Session;
@@ -12,7 +12,7 @@ pub const UNDO_MS: i64 = 5_000;
 /// The undo on offer: the songs it would put back, in the order taken out, and how much longer it can.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueUndo {
-    pub ids: Vec<String>,
+    pub ids: Vec<ItemKey>,
     pub left_ms: u32,
 }
 
@@ -34,7 +34,7 @@ impl Session {
     pub(crate) fn undoable_at(&self, now: i64) -> Option<QueueUndo> {
         let q = self.queue.lock();
         let left = UNDO_MS - (now - q.taken_at?);
-        let ids: Vec<String> = q.list.undoable().map(str::to_string).collect();
+        let ids: Vec<ItemKey> = q.list.undoable().cloned().collect();
         (left > 0 && !ids.is_empty()).then_some(QueueUndo { ids, left_ms: left as u32 })
     }
 
@@ -56,18 +56,18 @@ impl Session {
     }
 
     pub(crate) fn restore_all_at(&self, now: i64) -> Vec<PutBack> {
-        let back: Vec<(usize, String)> = {
+        let back: Vec<(usize, ItemKey)> = {
             let mut q = self.queue.lock();
             if !q.taken_at.is_some_and(|t| now - t < UNDO_MS) {
                 return Vec::new();
             }
-            let ids: Vec<String> = q.list.undoable().rev().map(str::to_string).collect();
+            let ids: Vec<ItemKey> = q.list.undoable().rev().cloned().collect();
             q.list.restore_all_taken().into_iter().zip(ids).collect()
         };
-        back.into_iter().map(|(at, id)| PutBack { at: at as u32, song: self.song(&id).unwrap_or_else(|| Song::only_id(id)) }).collect()
+        back.into_iter().map(|(at, id)| PutBack { at: at as u32, song: self.song(&id).unwrap_or_else(|| Song::only_key(id)) }).collect()
     }
 
-    pub(crate) fn restore_at(&self, id: &str, now: i64) -> QueueChange {
+    pub(crate) fn restore_at(&self, id: &ItemKey, now: i64) -> QueueChange {
         let mut q = self.queue.lock();
         let offered = q.taken_at.is_some_and(|t| now - t < UNDO_MS);
         let at = if offered { q.list.restore_taken(id) } else { None };
@@ -78,20 +78,20 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::playlist::tests::session;
+    use crate::playlist::tests::{ids, session};
 
     #[test]
     fn a_song_taken_out_goes_back_only_within_the_window() {
         let s = session(&["a", "b", "c"], 0);
         s.remove_at(1, 2, 1_000);
-        assert_eq!(s.undoable_at(1_000 + UNDO_MS - 1), Some(QueueUndo { ids: vec!["b".into()], left_ms: 1 }));
+        assert_eq!(s.undoable_at(1_000 + UNDO_MS - 1), Some(QueueUndo { ids: vec![ItemKey::own("b")], left_ms: 1 }));
         assert_eq!(s.undoable_at(1_000 + UNDO_MS), None);
-        assert_eq!(s.restore_at("b", 1_000 + UNDO_MS).at, None, "too late");
+        assert_eq!(s.restore_at(&ItemKey::own("b"), 1_000 + UNDO_MS).at, None, "too late");
         assert_eq!(s.playlist(|p| p.len()), 2);
 
         s.remove_at(0, 1, 9_000);
         assert_eq!(s.undoable_at(9_000).map(|u| u.left_ms), Some(UNDO_MS as u32));
-        assert_eq!(s.restore_at("a", 9_000 + UNDO_MS - 1).at, Some(0));
+        assert_eq!(s.restore_at(&ItemKey::own("a"), 9_000 + UNDO_MS - 1).at, Some(0));
         assert_eq!(s.undoable_at(9_001), None, "once");
     }
 
@@ -106,8 +106,8 @@ mod tests {
     fn a_clear_goes_back_whole_only_within_the_window() {
         let s = session(&["a", "b", "c", "d"], 1);
         assert_eq!(s.clear_upcoming_at(1_000), [3, 2]);
-        assert_eq!(s.playlist(|p| p.ids().to_vec()), ["a", "b"]);
-        assert_eq!(s.undoable_at(1_000).map(|u| u.ids), Some(vec!["d".into(), "c".into()]));
+        assert_eq!(s.playlist(|p| p.ids().to_vec()), ids(&["a", "b"]));
+        assert_eq!(s.undoable_at(1_000).map(|u| u.ids), Some(ids(&["d", "c"])));
         assert!(s.restore_all_at(1_000 + UNDO_MS).is_empty(), "too late");
         assert_eq!(s.playlist(|p| p.len()), 2);
 
@@ -115,7 +115,7 @@ mod tests {
         s.clear_upcoming_at(9_000);
         let back = s.restore_all_at(9_000 + UNDO_MS - 1);
         assert_eq!(back.iter().map(|b| (b.at, b.song.id.as_str())).collect::<Vec<_>>(), [(2, "c"), (3, "d")]);
-        assert_eq!(s.playlist(|p| (p.ids().to_vec(), p.current())), (vec!["a".into(), "b".into(), "c".into(), "d".into()], Some(1)));
+        assert_eq!(s.playlist(|p| (p.ids().to_vec(), p.current())), (ids(&["a", "b", "c", "d"]), Some(1)));
         assert!(s.restore_all_at(9_001).is_empty(), "once");
         assert_eq!(s.undoable_at(9_001), None);
     }

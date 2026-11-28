@@ -3,6 +3,7 @@
 
 mod common;
 
+use nori_model::ItemKey;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
@@ -47,7 +48,7 @@ fn a_song_slot_stage_installs_in_its_slot() {
 
 /// The song `id` titled `title`, as the profile knows it.
 fn songs(titles: &'static [(&'static str, &'static str)]) -> nori_plugins::Songs {
-    Arc::new(move |id: &str| titles.iter().find(|(i, _)| *i == id).map(|(i, t)| Song { id: i.to_string(), title: t.to_string(), duration: 60, ..Default::default() }))
+    Arc::new(move |key: &nori_model::ItemKey| titles.iter().find(|(i, _)| *i == key.id).map(|(i, t)| Song { id: i.to_string(), title: t.to_string(), duration: 60, ..Default::default() }))
 }
 
 #[test]
@@ -61,40 +62,40 @@ fn a_plugin_prepares_and_analyses_the_songs_it_hears() {
     preparing.on_prepared(Arc::new(move || told.lock().unwrap().send(()).unwrap()));
     let samples = vec![0.25f32; 2 * 1000];
 
-    let mut tap = preparing.tap("s1", FORMAT, 0).unwrap();
+    let mut tap = preparing.tap(&ItemKey::own("s1"), FORMAT, 0).unwrap();
     for _ in 0..3 {
         tap.samples(&samples);
     }
     tap.end();
     drop(tap);
     came.recv_timeout(Duration::from_secs(20)).expect("its data came");
-    let data = preparing.prepared("s1");
+    let data = preparing.prepared(&ItemKey::own("s1"));
     assert_eq!(data.len(), 1);
     assert_eq!((data[0].0.as_str(), &data[0].1[..]), (FIXTURE, &[3000u64.to_le_bytes(), 0u64.to_le_bytes()].concat()[..]), "every frame fed, from the first");
 
     // Its AutoMix data for the song refines nori's analysis; a song it has none of stays nori's.
     let mixing = plugins.mixing();
     let nori = TrackAnalysis { song_id: "s1".into(), duration_ms: 60_000, bpm: 100.0, lufs: -12.0, ..Default::default() };
-    let r = mixing.refine("s1", &nori).expect("refined");
+    let r = mixing.refine(&ItemKey::own("s1"), &nori).expect("refined");
     assert_eq!((r.bpm, r.key), (123.0, 7));
-    assert_eq!(mixing.refine("s3", &TrackAnalysis { song_id: "s3".into(), ..nori.clone() }), None, "s3 was not analysed");
+    assert_eq!(mixing.refine(&ItemKey::own("s3"), &TrackAnalysis { song_id: "s3".into(), ..nori.clone() }), None, "s3 was not analysed");
 
     // A song it doesn't want: nothing is made, and the tap stops copying.
-    let mut tap = preparing.tap("s2", FORMAT, 0).unwrap();
+    let mut tap = preparing.tap(&ItemKey::own("s2"), FORMAT, 0).unwrap();
     tap.samples(&samples);
     tap.end();
     drop(tap);
     assert!(came.recv_timeout(Duration::from_secs(2)).is_err());
-    assert!(preparing.prepared("s2").is_empty());
+    assert!(preparing.prepared(&ItemKey::own("s2")).is_empty());
 
     // Read from part-way, it is told where the samples start, and not analysed.
-    let mut tap = preparing.tap("s3", FORMAT, 4410).unwrap();
+    let mut tap = preparing.tap(&ItemKey::own("s3"), FORMAT, 4410).unwrap();
     tap.samples(&samples);
     tap.end();
     drop(tap);
     came.recv_timeout(Duration::from_secs(20)).expect("its data came");
-    assert_eq!(&preparing.prepared("s3")[0].1[..], &[1000u64.to_le_bytes(), 4410u64.to_le_bytes()].concat()[..]);
-    assert_eq!(mixing.refine("s3", &TrackAnalysis { song_id: "s3".into(), ..nori }), None, "a song heard in part is not analysed");
+    assert_eq!(&preparing.prepared(&ItemKey::own("s3"))[0].1[..], &[1000u64.to_le_bytes(), 4410u64.to_le_bytes()].concat()[..]);
+    assert_eq!(mixing.refine(&ItemKey::own("s3"), &TrackAnalysis { song_id: "s3".into(), ..nori }), None, "a song heard in part is not analysed");
 }
 
 #[test]
@@ -106,7 +107,7 @@ fn a_plugin_plans_the_transitions_out_of_its_songs() {
     let mixing = plugins.mixing();
     let mut nori = nori_player::automix::plan::plan(None, None, 60_000, 60_000, &Default::default());
     (nori.kind, nori.out_start_ms, nori.duration_ms) = (TransitionKind::EqualPowerFade, 50_000, 6_000);
-    let p = mixing.plan("s1", "s2", None, None, &nori).expect("its plan");
+    let p = mixing.plan(&ItemKey::own("s1"), &ItemKey::own("s2"), None, None, &nori).expect("its plan");
     assert_eq!((p.out_start_ms, p.duration_ms, p.in_start_ms), (47_000, 2_000, 0));
-    assert_eq!(mixing.plan("s2", "s1", None, None, &nori), None, "out of another song, nori's");
+    assert_eq!(mixing.plan(&ItemKey::own("s2"), &ItemKey::own("s1"), None, None, &nori), None, "out of another song, nori's");
 }

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
-use nori_model::Song;
+use nori_model::{ItemKey, Keyed, Song};
 use nori_player::pcm::Format;
 use nori_player::stage::{Preparing, Tap};
 
@@ -30,13 +30,13 @@ pub(crate) struct Hearer {
     pub(crate) analyses: bool,
 }
 
-/// What plugins made of songs: song id, plugin id, data.
-type Made = VecDeque<(String, String, Arc<[u8]>)>;
+/// What plugins made of songs: song, plugin id, data.
+type Made = VecDeque<(ItemKey, String, Arc<[u8]>)>;
 
 type Wake = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
 
-/// Finds a song's record by id (the open profile's).
-pub type Songs = Arc<dyn Fn(&str) -> Option<Song> + Send + Sync>;
+/// Finds a queued song's record (the open profile's).
+pub type Songs = Arc<dyn Fn(&ItemKey) -> Option<Song> + Send + Sync>;
 
 /// The plugins that hear songs, and what they made. Made at first need, while one is enabled.
 pub struct Preparation {
@@ -44,7 +44,7 @@ pub struct Preparation {
     prepared: Arc<Mutex<Made>>,
     analysed: Arc<Mutex<Made>>,
     /// The song being heard, told when it is done.
-    hearing: Arc<(Mutex<Option<String>>, Condvar)>,
+    hearing: Arc<(Mutex<Option<ItemKey>>, Condvar)>,
     wake: Wake,
     songs: Songs,
 }
@@ -141,11 +141,11 @@ impl Preparation {
     pub(crate) fn start(hearers: Vec<Hearer>, songs: Songs) -> Arc<Preparation> {
         let (to, jobs) = mpsc::channel::<Job>();
         let (prepared, analysed, wake): (Arc<Mutex<Made>>, Arc<Mutex<Made>>, Wake) = Default::default();
-        let hearing: Arc<(Mutex<Option<String>>, Condvar)> = Arc::default();
+        let hearing: Arc<(Mutex<Option<ItemKey>>, Condvar)> = Arc::default();
         let (p, a, w, h) = (prepared.clone(), analysed.clone(), wake.clone(), hearing.clone());
         let _ = std::thread::Builder::new().name("nori-prepare".into()).spawn(move || {
             for job in jobs {
-                *h.0.lock().expect("not poisoned") = Some(job.song.id.clone());
+                *h.0.lock().expect("not poisoned") = Some(job.song.key());
                 hear(&hearers, job, &p, &a, &w);
                 *h.0.lock().expect("not poisoned") = None;
                 h.1.notify_all();
@@ -156,19 +156,19 @@ impl Preparation {
 
     /// Plugin `plugin`'s AutoMix analysis data for song `id`, if it made any; while the song is still
     /// being heard, waited for at most `budget`.
-    pub(crate) fn analysis(&self, id: &str, plugin: &str, budget: std::time::Duration) -> Option<Vec<u8>> {
+    pub(crate) fn analysis(&self, id: &ItemKey, plugin: &str, budget: std::time::Duration) -> Option<Vec<u8>> {
         let (hearing, done) = &*self.hearing;
         let g = hearing.lock().expect("not poisoned");
-        drop(done.wait_timeout_while(g, budget, |h| h.as_deref() == Some(id)).expect("not poisoned"));
+        drop(done.wait_timeout_while(g, budget, |h| h.as_ref() == Some(id)).expect("not poisoned"));
         self.analysed.lock().expect("not poisoned").iter().find(|(s, p, _)| s == id && p == plugin).map(|(_, _, d)| d.to_vec())
     }
 }
 
 /// Keeps `data`, the newest of [`KEPT`] songs'.
-fn keep(made: &Mutex<Made>, song: &str, plugin: &str, data: Vec<u8>) {
+fn keep(made: &Mutex<Made>, song: &ItemKey, plugin: &str, data: Vec<u8>) {
     let mut m = made.lock().expect("not poisoned");
     m.retain(|(s, p, _)| !(s == song && p == plugin));
-    m.push_back((song.to_string(), plugin.to_string(), data.into()));
+    m.push_back((song.clone(), plugin.to_string(), data.into()));
     while m.iter().map(|(s, _, _)| s).collect::<BTreeSet<_>>().len() > KEPT {
         let oldest = m.front().map(|(s, _, _)| s.clone());
         m.retain(|(s, _, _)| Some(s) != oldest.as_ref());
@@ -232,13 +232,13 @@ fn hear(hearers: &[Hearer], job: Job, prepared: &Mutex<Made>, analysed: &Mutex<M
     for (h, prepares, analyses) in wanting {
         if prepares {
             if let Some(data) = nori_tasks::block_on(h.worker.call(|st, p| p.nori_plugin_preparation().call_finish(st))).flatten() {
-                keep(prepared, &song.id, &h.id, data);
+                keep(prepared, &song.key(), &h.id, data);
                 came = true;
             }
         }
         if analyses {
             if let Some(data) = nori_tasks::block_on(h.worker.call(|st, p| p.nori_plugin_automix().call_finish_analysis(st))).flatten() {
-                keep(analysed, &song.id, &h.id, data);
+                keep(analysed, &song.key(), &h.id, data);
             }
         }
     }
@@ -249,14 +249,14 @@ fn hear(hearers: &[Hearer], job: Job, prepared: &Mutex<Made>, analysed: &Mutex<M
 }
 
 impl Preparing for Preparation {
-    fn tap(&self, id: &str, format: Format, from: u64) -> Option<Box<dyn Tap>> {
+    fn tap(&self, id: &ItemKey, format: Format, from: u64) -> Option<Box<dyn Tap>> {
         let song = (self.songs)(id)?;
         let feed = Arc::new(Feed::new(format, from));
         self.to.lock().expect("not poisoned").send(Job { song, format, from, feed: feed.clone() }).ok()?;
         Some(Box::new(FeedTap { feed, next: from, channels: format.channels.max(1) }))
     }
 
-    fn prepared(&self, id: &str) -> Vec<(String, Arc<[u8]>)> {
+    fn prepared(&self, id: &ItemKey) -> Vec<(String, Arc<[u8]>)> {
         self.prepared.lock().expect("not poisoned").iter().filter(|(s, _, _)| s == id).map(|(_, p, d)| (p.clone(), d.clone())).collect()
     }
 

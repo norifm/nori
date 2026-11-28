@@ -7,6 +7,7 @@
 use std::sync::atomic::Ordering;
 
 use nori_model::deciders::{NoriButton, SessionButtons};
+use nori_model::ItemKey;
 
 use crate::convert::song_out;
 use crate::manifest::{Glyph, GLYPHS};
@@ -44,7 +45,7 @@ pub(crate) struct Asked {
     /// Raised by each `buttons-changed`.
     told: u64,
     plugins: Vec<String>,
-    song: Option<String>,
+    song: Option<ItemKey>,
     nori: SessionButtons,
     repeat: Repeat,
     lang: String,
@@ -118,7 +119,7 @@ impl Plugins {
 
     /// The notification's buttons while queued song `song` plays, given nori's and the repeat mode,
     /// a plugin's labels in `lang`.
-    pub async fn notification_buttons(&self, song: Option<String>, nori: SessionButtons, repeat: Repeat, lang: String) -> Vec<NotificationButton> {
+    pub async fn notification_buttons(&self, song: Option<ItemKey>, nori: SessionButtons, repeat: Repeat, lang: String) -> Vec<NotificationButton> {
         let plugins = self.extending(POINT);
         let own = || nori.buttons.iter().map(|&b| NotificationButton { press: ButtonPress::Nori { button: b }, glyph: None, label: None }).collect();
         if plugins.is_empty() {
@@ -129,7 +130,7 @@ impl Plugins {
             return kept.clone();
         }
         let found = self.songs.lock().expect("not poisoned").clone();
-        let now = w::Playing { song: song.as_deref().and_then(|id| found.as_ref()?(id)).as_ref().map(song_out), favorite: nori.starred, shuffle: nori.shuffling, repeat: repeat_out(repeat) };
+        let now = w::Playing { song: song.as_ref().and_then(|id| found.as_ref()?(id)).as_ref().map(song_out), favorite: nori.starred, shuffle: nori.shuffling, repeat: repeat_out(repeat) };
         let handed: Vec<w::Button> = nori.buttons.iter().map(|&b| w::Button { press: w::Press::Nori(nori_out(b)), glyph: None, label: None }).collect();
         let mut decided = own();
         for id in plugins {

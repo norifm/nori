@@ -13,7 +13,7 @@ use crate::browse::ProfileRules;
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
 use crate::settings::{SavedServer, ServerKind};
-use crate::stream::{StreamQuality, StreamTarget};
+use crate::stream::{Stream, StreamQuality};
 use crate::transport::{block_on, Exchange, NetError, Transport, TransportResponse};
 use crate::{AlbumDetail, ArtistDetail, Core, PlaylistDetail, SearchResult};
 
@@ -68,7 +68,7 @@ impl Provider for HostedProvider {
         Err(nowhere("place for this change"))
     }
 
-    fn stream(&self, _: &Client, id: String, q: StreamQuality) -> StreamTarget {
+    fn stream(&self, _: &Client, id: String, q: StreamQuality) -> Stream {
         resolved_stream(ADDRESS, &id, &q)
     }
 

@@ -68,7 +68,7 @@ pub(crate) fn opened(dir: &Path) -> Result<(std::sync::Arc<Settings>, StoredPref
 
 /// A profile's name, otherwise its user, otherwise its address; empty for none of them (the app then
 /// calls it by its kind).
-fn label(s: &SavedServer) -> String {
+pub(crate) fn label(s: &SavedServer) -> String {
     [s.name.trim(), s.user.trim(), s.url.as_str()]
         .into_iter()
         .find(|l| !l.is_empty())
@@ -115,15 +115,22 @@ fn edit_servers(dir: &Path, change: impl FnOnce(ServerList) -> ServerList) -> Re
 /// shows for the letter.
 pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
     let (_, prefs) = opened(dir)?;
-    Ok(prefs
-        .servers
+    Ok(nori_core::settings::servers_shown(prefs.servers.clone())
         .iter()
         .map(|s| {
             let active = s.id == prefs.active_server_id;
             // A plugin's profile never opens here: the iPod runs none.
             let waits = crate::kinds().waits(s.clone()).is_some();
             let letter = profile_letter(s.clone(), nori_core::settings::label(&s.name, &s.url));
-            serde_json::json!({ "id": s.id, "label": label(s), "name": s.name, "url": s.url, "active": active, "kind": s.kind.id(), "waits": waits,
+            let sources: Vec<String> = nori_core::settings::profile_sources(prefs.servers.clone(), s.clone()).iter().map(label).collect();
+            let url = if sources.is_empty() {
+                s.url.clone()
+            } else if s.url.is_empty() {
+                format!("+ {}", sources.join(", "))
+            } else {
+                format!("{} · + {}", s.url, sources.join(", "))
+            };
+            serde_json::json!({ "id": s.id, "label": label(s), "name": s.name, "url": url, "active": active, "kind": s.kind.id(), "waits": waits,
                 "icon": s.icon.id(), "letter": letter })
         })
         .collect())

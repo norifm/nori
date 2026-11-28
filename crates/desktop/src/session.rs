@@ -56,6 +56,8 @@ pub enum Msg {
     Indexed(String),
     /// A playlist write the server took, and what to say: the playlists are read again.
     Playlist { text: String, change: PlaylistChange },
+    /// A playlist that did not take the songs, and why.
+    PlaylistRefused(nori_core::menus::PlaylistRefusal),
     /// A note with a button, answered with [`nori_host::session::Handle::curve_answer`].
     Ask { text: String, action: String },
     /// A newer nori is out: a note whose button opens its release `page`.
@@ -124,7 +126,7 @@ pub enum Msg {
     /// A link to a song from the server, to copy; None when it made none.
     Shared(Option<String>),
     /// The playlists song `0` may go into, each with what it has of it; empty when they could not be read.
-    Choices(Vec<String>, Vec<nori_core::menus::PlaylistChoice>),
+    Choices(Vec<nori_core::Song>, Vec<nori_core::menus::PlaylistChoice>),
     /// A queue another device or app left on the server, worth offering here, or none.
     Offer(Option<nori_core::library::QueueOffer>),
     /// A plugin installed (its id), or why not.
@@ -134,17 +136,17 @@ pub enum Msg {
     /// The plugins' lines in song `song`'s details.
     SongInfo { song: String, groups: Vec<nori_plugins::InfoGroup> },
     /// The plugins' lines under the player's output, asked for song `song`.
-    PlayerStatus { song: Option<String>, lines: Vec<String> },
+    PlayerStatus { song: Option<nori_core::ItemKey>, lines: Vec<String> },
     /// A plugin's still sleeve's address for song `song`, to fetch.
-    Artwork { song: String, url: String },
+    Artwork { song: nori_core::ItemKey, url: String },
     /// A plugin's moving cover for `song`, which plays while the sleeve shows.
     Loop { song: nori_core::Song, artwork: nori_plugins::Artwork },
     /// A frame of the moving cover of song `song`.
-    LoopFrame { song: String },
+    LoopFrame { song: nori_core::ItemKey },
     /// The moving cover of `song` failed; with a status, its plugin hears it.
     LoopFailed { song: nori_core::Song, artwork: nori_plugins::Artwork, status: Option<u16> },
     /// A plugin's still sleeve for song `song`, drawn as its cover in Now Playing.
-    Sleeve { song: String, image: Arc<Image> },
+    Sleeve { song: nori_core::ItemKey, image: Arc<Image> },
     /// Plugin `id`'s README.
     PluginReadme { id: String, blocks: Vec<nori_plugins::ReadmeBlock> },
     /// Plugin `id`'s icon as straight RGBA pixels, `session::ICON_SIDE` square, or that it has none.

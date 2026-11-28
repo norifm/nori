@@ -125,8 +125,11 @@ pub const NOT_SIGNED_IN: &str = "Not signed in";
 pub const SIGN_IN: &str = "Sign in";
 pub const MANAGE: &str = "Manage";
 pub const SCROBBLING: &str = "Scrobbling";
+/// A profile's Edit page: what it plays from, browsed as one library.
+pub const SOURCES: &str = "Sources";
 pub const BUILT_IN: &str = "Built in";
 pub const ADD_SCROBBLER: &str = "Add scrobbler";
+pub const ADD_SOURCE: &str = "Add source";
 pub const SCROBBLING_HINT: &str = "Plays go to each one that’s on, whatever this profile plays from";
 pub const KEEP_VERSION: &str = "Keep this version";
 pub const UNSIGNED: &str = "Unsigned";
@@ -911,6 +914,11 @@ pub fn playlist_deleted(name: &str) -> String {
 
 pub const REMOVE_FROM_PLAYLIST: &str = "Remove from playlist";
 pub const MOVED: &str = "Moved";
+
+/// A playlist of source `source`, which takes only that source's songs.
+pub fn takes_only_its_songs(source: &str) -> String {
+    format!("On {source}, so it takes only songs from {source}")
+}
 
 pub fn playlist_failed(e: &str) -> String {
     format!("The playlist could not be changed: {e}")

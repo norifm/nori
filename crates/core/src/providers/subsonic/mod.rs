@@ -13,7 +13,7 @@ use crate::browse::{profile_rules, ProfileRules};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
 use crate::settings::{SavedServer, ServerKind};
-use crate::stream::{StreamQuality, StreamTarget};
+use crate::stream::{Stream, StreamQuality};
 use crate::transport::{NetError, Transport};
 use crate::Core;
 
@@ -69,6 +69,10 @@ impl Provider for Subsonic {
         true
     }
 
+    fn holds(&self) -> nori_library::merged::SourceKind {
+        nori_library::merged::SourceKind::Library
+    }
+
     /// The server's answer, kept raw; a server has no home feed.
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
         let Some((endpoint, params, _)) = reads::request(&read) else { return Ok(None) };
@@ -95,9 +99,8 @@ impl Provider for Subsonic {
         client.subsonic_sync().await
     }
 
-    fn stream(&self, client: &Client, id: String, q: StreamQuality) -> StreamTarget {
-        let key = crate::stream::stream_cache_key(&id, &q);
-        StreamTarget { url: client.core.stream_url(id, q.bit_rate, q.format), key }
+    fn stream(&self, client: &Client, id: String, q: StreamQuality) -> Stream {
+        Stream { quality: format!("{}{}", q.bit_rate, q.format), url: client.core.stream_url(id, q.bit_rate, q.format) }
     }
 
     fn cover_address(&self, core: &Core, cover: &str, size: u32) -> String {

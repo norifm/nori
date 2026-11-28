@@ -50,6 +50,7 @@ fn sample() -> StoredPrefs {
                 user: "listener".into(),
             }],
             folders: Vec::new(),
+            sources: vec!["b2".into()],
         }, SavedServer {
             id: "b2".into(),
             kind: ServerKind::Local,

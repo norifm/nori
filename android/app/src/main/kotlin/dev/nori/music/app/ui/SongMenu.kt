@@ -1,5 +1,7 @@
 package dev.nori.music.app.ui
 
+import dev.nori.music.ffi.model.ItemKey
+import dev.nori.music.data.key
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.clickable
@@ -83,7 +85,7 @@ fun SongMenu(
     val open = song != null
     var stage by remember(open) { mutableStateOf(MenuStage.MENU) }
     NoriSheet(player?.takeIf { open && stage == MenuStage.SLEEP }, onDismiss) { p -> SleepChoices(p, onDismiss) }
-    NoriSheet(player?.takeIf { open && stage == MenuStage.LYRICS }?.let { p -> song?.let { p to it.id } }, onDismiss) { (p, id) -> LyricsSheet(p, id) }
+    NoriSheet(player?.takeIf { open && stage == MenuStage.LYRICS }?.let { p -> song?.let { p to it.key } }, onDismiss) { (p, key) -> LyricsSheet(p, key) }
     NoriSheet(song?.takeIf { stage == MenuStage.DETAILS }, onDismiss) { s -> TrackInfo(s, actions) }
     NoriSheet(song?.takeIf { stage == MenuStage.PLAYLIST }, onDismiss) { s -> PlaylistPicker(listOf(s), actions, onDismiss) }
 
@@ -98,15 +100,15 @@ fun SongMenu(
             // The marks are collected here rather than taken from LocalStarMarks because the sheet is put up
             // outside the provider, at the top of the app, so that it outlives the row or the player that asked for it.
             val marks by actions.starMarks.collectAsState()
-            val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)
-            val download = when (song.id) {
+            val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, song.key, song.starred)
+            val download = when (song.key) {
                 in downloads.doneIds -> dev.nori.music.ffi.library.SongDownload.DONE
                 in downloads.pendingIds -> dev.nori.music.ffi.library.SongDownload.PENDING
                 else -> dev.nori.music.ffi.library.SongDownload.NONE
             }
             val rules = LocalRules.current
             val nav = LocalNav.current
-            val lyrics = player?.let { p -> val l by p.lyrics.collectAsState(); hasWords(l, song.id) } == true
+            val lyrics = player?.let { p -> val l by p.lyrics.collectAsState(); hasWords(l, song.key) } == true
             var excluded by remember(song.id) { mutableStateOf(false) }
             LaunchedEffect(song.id) { excluded = actions.excludedFromMixes(song) }
             val items = remember(song, starred, excluded, download, player != null, lyrics, rules, page) { dev.nori.music.ffi.library.songMenu(song, starred, excluded, download, player != null, lyrics, rules.stars, rules.account, rules.playlists, rules.downloads, rules.radio, rules.asks, page) }
@@ -121,7 +123,7 @@ fun SongMenu(
                 dev.nori.music.ffi.library.SongAction.StopDownload -> SheetGlyph(Iconoir.Xmark, labels[n], quiet = true) { actions.cancelDownloads(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Download -> SheetGlyph(Iconoir.Download, labels[n], quiet = true) { actions.download(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Radio -> SheetGlyph(Iconoir.AntennaSignal, labels[n], quiet = true) { actions.startRadio(song); onDismiss() }
-                else -> SheetGlyph(Iconoir.ShareIos, labels[n], quiet = true) { actions.share(song.id); onDismiss() }
+                else -> SheetGlyph(Iconoir.ShareIos, labels[n], quiet = true) { actions.share(song.key); onDismiss() }
             }
             @Composable fun line(n: Int, divider: Boolean) = when (val a = items[n].action) {
                 dev.nori.music.ffi.library.SongAction.PlayNext -> Item(labels[n], Iconoir.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
@@ -131,15 +133,15 @@ fun SongMenu(
                 is dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> Item(labels[n], Iconoir.Prohibition, divider = divider) { actions.excludeFromMixes(song, a.on); excluded = a.on }
                 dev.nori.music.ffi.library.SongAction.Lyrics -> Item(labels[n], Iconoir.QuoteMessage, enabled = items[n].enabled, divider = divider) { stage = MenuStage.LYRICS }
                 dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(labels[n], Iconoir.HalfMoon, divider = divider) { stage = MenuStage.SLEEP }
-                else -> Item(labels[n], Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
+                else -> Item(labels[n], Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.key, isAlbum = false); onDismiss() }
             }
             val names = at(dev.nori.music.ffi.library.SongMenuPlace.NAMES).map { items[it].action }
             SheetHead(actions.cover(song.coverArt, CoverSize.ROW), song.title, "", trailing = { at(dev.nori.music.ffi.library.SongMenuPlace.TITLE).forEach { titleGlyph(it) } }) {
                 SongNames(song, names) { a ->
                     when (a) {
-                        is dev.nori.music.ffi.library.SongAction.GoToAlbum -> nav.album(a.id)
+                        is dev.nori.music.ffi.library.SongAction.GoToAlbum -> nav.album(a.id, source = song.source)
                         // The song's own cover stands in for a lone artist's until their page has one.
-                        is dev.nori.music.ffi.library.SongAction.GoToArtist -> nav.artist(a.id, Artist(a.id, a.name, song.coverArt.takeIf { song.artists.size <= 1 }, null, 0u, false, false))
+                        is dev.nori.music.ffi.library.SongAction.GoToArtist -> nav.artist(a.id, Artist(a.id, a.name, song.coverArt.takeIf { song.artists.size <= 1 }, null, 0u, false, false, song.source))
                         else -> Unit
                     }
                     onDismiss()
@@ -219,8 +221,8 @@ private fun SongNames(song: Song, names: List<dev.nori.music.ffi.library.SongAct
 fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) {
     var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.Playlist?>(null) }
     var renaming by remember { mutableStateOf<dev.nori.music.ffi.model.Playlist?>(null) }
-    DeleteQuestion(deleting, { it.name }, { actions.deletePlaylist(it.id) }, { deleting = null })
-    renaming?.let { p -> RenameDialog(p.name, p.name, { renaming = null }) { name -> actions.renamePlaylist(p.id, name); renaming = null } }
+    DeleteQuestion(deleting, { it.name }, { actions.deletePlaylist(it) }, { deleting = null })
+    renaming?.let { p -> RenameDialog(p.name, p.name, { renaming = null }) { name -> actions.renamePlaylist(p, name); renaming = null } }
     NoriSheet(card, onDismiss) { card ->
         val (title, line, art) = when (card) {
             is CardItem.OfAlbum -> Triple(card.album.name, card.album.subtitle, card.album.coverArt)
@@ -294,16 +296,16 @@ private fun SheetGroup(content: @Composable androidx.compose.foundation.layout.C
 @Composable
 private fun HeadLine() = Box(Modifier.padding(horizontal = SHEET_SIDE)) { Hairline(startIndent = 0.dp, endIndent = 0.dp) }
 
-/** Song [id]'s lyrics as [l] has them, when it has words. */
-private fun hasWords(l: dev.nori.music.ffi.lyrics.LyricsNow, id: String): Boolean =
-    (l as? dev.nori.music.ffi.lyrics.LyricsNow.Shown)?.let { it.song == id && it.pick.lyrics.lines.isNotEmpty() } == true
+/** Song [key]'s lyrics as [l] has them, when it has words. */
+private fun hasWords(l: dev.nori.music.ffi.lyrics.LyricsNow, key: ItemKey): Boolean =
+    (l as? dev.nori.music.ffi.lyrics.LyricsNow.Shown)?.let { it.song == key && it.pick.lyrics.lines.isNotEmpty() } == true
 
 /**
  * The playing song's lyrics: where they came from, how finely they are timed, who set their timing and
  * by how much (the core's `LyricsTiming`), and a step earlier or later, kept for these words.
  */
 @Composable
-private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: String) {
+private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: ItemKey) {
     val l by player.lyrics.collectAsState()
     val found = remember(l, id) { l.wordsOf(id) } ?: return
     val lyrics = found.lyrics
@@ -405,10 +407,15 @@ private fun PlaylistChoiceRow(c: dev.nori.music.ffi.library.PlaylistChoice, aske
                 .padding(horizontal = GROUP_INSET, vertical = 8.dp),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         ) {
-            Cover(actions.cover(c.playlist.coverArt, CoverSize.ROW), PICKED_COVER, radius = 6.dp)
+            Cover(actions.cover(c.playlist.coverArt, CoverSize.ROW), PICKED_COVER, radius = 6.dp, mark = marked(c.playlist.sourceMarked, c.playlist.source))
             Column(Modifier.weight(1f).padding(horizontal = GROUP_INSET)) {
                 Text(c.playlist.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text(say.playlistHolds(c.holds.toInt(), asked, c.playlist.songCount.toInt()), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1)
+                // One that takes only its own source's songs says so; a tap says why it took none.
+                val line = when (val why = c.refused) {
+                    is dev.nori.music.ffi.library.PlaylistRefusal.OtherSource -> say.onlySongsFrom(LocalSourceNames.current[why.source].orEmpty())
+                    null -> say.playlistHolds(c.holds.toInt(), asked, c.playlist.songCount.toInt())
+                }
+                Text(line, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1)
             }
             if (full) Icon(Iconoir.Check, null, Modifier.size(20.dp), tint = scheme.onSurface)
         }

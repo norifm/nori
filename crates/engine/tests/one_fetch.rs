@@ -5,6 +5,7 @@
 
 mod common;
 
+use nori_core::ItemKey;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::sync::Arc;
@@ -120,7 +121,7 @@ impl Rig {
         }
         let net = Arc::new(net);
         core.session.register(songs);
-        core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(0), false, None);
+        core.session.set(ids.iter().map(|s| s.to_string()).map(ItemKey::own).collect(), Some(0), false, None);
         let analyses = Analyses::of(client.clone());
         let measurer = Measurer::new(analyses.clone(), store.clone());
         let library = CoreLibrary { client: client.clone(), bytes: net.clone(), store: Some(store.clone()), analyses: analyses.clone() };
@@ -159,7 +160,7 @@ impl Rig {
     }
 
     fn measured(&self, id: &str) -> bool {
-        self.core.analysis_get(id.into()).unwrap().is_some()
+        self.core.analysis_get(ItemKey::own(id)).unwrap().is_some()
     }
 }
 

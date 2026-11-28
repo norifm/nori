@@ -68,7 +68,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.ActionsViewModel
-import dev.nori.music.data.songId
+import dev.nori.music.data.key
+import dev.nori.music.data.songKey
 import dev.nori.music.data.wordsOf
 import dev.nori.music.app.vm.PlayerViewModel
 import dev.nori.music.app.vm.SettingsViewModel
@@ -107,8 +108,8 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean,
     // Only the words of the song on the page: an answer for any other song (the one before, handed over
     // as the panel opens, or still on its way out as the song changes) is the loader until the right
     // one comes.
-    val current = playerState.current?.id
-    val looking = loaded.songId != current || loaded is dev.nori.music.ffi.lyrics.LyricsNow.Looking
+    val current = playerState.current?.key
+    val looking = loaded.songKey != current || loaded is dev.nori.music.ffi.lyrics.LyricsNow.Looking
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.effective.collectAsStateWithLifecycle()
     val shown = LocalPlayerShown.current
@@ -131,7 +132,7 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean,
         // back through the loader, so the last song's lyrics never sit on screen under the new title.
         val found = remember(loaded, current) { loaded.wordsOf(current) }
         // The perf build's watch hears which song's lyrics went up; no other build has a recorder.
-        dev.nori.music.app.PerfHooks.recorder?.let { r -> LaunchedEffect(found) { if (found != null) current?.let(r::lyricsShown) } }
+        dev.nori.music.app.PerfHooks.recorder?.let { r -> LaunchedEffect(found) { if (found != null) current?.id?.let(r::lyricsShown) } }
         val phase: Any = found?.let { Words(current, it) } ?: if (looking) LyricsPhase.LOADING else LyricsPhase.NONE
         // Where the words on screen are, so finer words for the same song take their place line for line.
         val anchor = remember { LyricsAnchor() }
@@ -182,14 +183,14 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean,
 private enum class LyricsPhase { LOADING, NONE }
 
 /** Lyrics to show and the song they are for: another song's words are another page. */
-private data class Words(val song: String?, val found: dev.nori.music.data.FoundLyrics)
+private data class Words(val song: dev.nori.music.ffi.model.ItemKey?, val found: dev.nori.music.data.FoundLyrics)
 
 /**
  * The words being followed on screen: their song, lines, list and lit line, kept by the body that follows
  * them. Finer words for the same song start from it, so the line on screen stays where it is.
  */
 private class LyricsAnchor {
-    var song: String? = null
+    var song: dev.nori.music.ffi.model.ItemKey? = null
     var lyrics: dev.nori.music.ffi.model.Lyrics? = null
     var list: androidx.compose.foundation.lazy.LazyListState? = null
     /**
@@ -205,7 +206,7 @@ private class LyricsAnchor {
      * the lit one (or the first on screen, when the lit one is scrolled away) and its place in pixels; null
      * when there is nothing to carry over (another song, nothing shown yet).
      */
-    fun carry(song: String?, lyrics: dev.nori.music.ffi.model.Lyrics): Pair<Int, Int>? {
+    fun carry(song: dev.nori.music.ffi.model.ItemKey?, lyrics: dev.nori.music.ffi.model.Lyrics): Pair<Int, Int>? {
         val old = this.lyrics ?: return null
         val list = this.list ?: return null
         if (song == null || song != this.song || old === lyrics || lyrics.lines.isEmpty()) return null
@@ -218,7 +219,7 @@ private class LyricsAnchor {
      * The line of [lyrics] for [song] standing for the one lit in the words followed, for their clock to
      * start on (`LyricsClock.land`); null when there is nothing to carry over (another song, nothing lit).
      */
-    fun litLine(song: String?, lyrics: dev.nori.music.ffi.model.Lyrics): Int? {
+    fun litLine(song: dev.nori.music.ffi.model.ItemKey?, lyrics: dev.nori.music.ffi.model.Lyrics): Int? {
         val old = this.lyrics ?: return null
         if (song == null || song != this.song || old === lyrics || lyrics.lines.isEmpty() || active !in old.lines.indices) return null
         return matching(old, active, lyrics)
@@ -252,7 +253,7 @@ private val HEADER_FADE = FadeTimes(inMs = 220f, outMs = 160f)
 
 /** The words of one song, in time with it. */
 @Composable
-private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyrics, song: String?, playing: Boolean, following: Boolean, anchor: LyricsAnchor) {
+private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyrics, song: dev.nori.music.ffi.model.ItemKey?, playing: Boolean, following: Boolean, anchor: LyricsAnchor) {
     val lyrics = found.lyrics
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.effective.collectAsStateWithLifecycle()
@@ -595,7 +596,7 @@ private fun LyricsHeader(vm: PlayerViewModel, actions: ActionsViewModel, song: d
             }
         }
         song?.let { s ->
-            val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
+            val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.key, s.starred)
             // A jam guest's seal would be the host's.
             val tap = LocalSealTap.current
             NoiseTitleButton(vm)

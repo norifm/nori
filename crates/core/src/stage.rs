@@ -307,7 +307,7 @@ mod tests {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let song = |id: &str, album: &str| Song { id: id.into(), album: album.into(), ..Default::default() };
         core.session.register(vec![song("1", "Red"), song("2", "Blue"), song("3", "Blue")]);
-        core.session.set(vec!["1".into(), "2".into(), "3".into()], Some(0), false, None);
+        core.session.set(vec![crate::ItemKey::own("1"), crate::ItemKey::own("2"), crate::ItemKey::own("3")], Some(0), false, None);
         assert_eq!(core.queue_rows(3, false, 0).from.as_deref(), Some("Blue"));
         assert_eq!(core.queue_rows(3, false, -1).from, None);
     }

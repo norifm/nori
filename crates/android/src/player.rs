@@ -9,6 +9,7 @@
 //! up once, in the first `create`, on a thread that sees the app's classes; Rust threads calling them stay
 //! attached for life.
 
+use nori_core::ItemKey;
 use std::collections::VecDeque;
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -1156,8 +1157,9 @@ struct PerfWatch {
 impl PerfWatch {
     /// What the stream cache holds of song `id`, for the perf build's silent-break report.
     fn disk_words(&self, id: &str) -> String {
-        let Some(target) = self.current.get().map(|c| c.resolve_now(id)) else { return format!("{id}: no server to resolve it") };
-        if target.key == nori_core::stream::download_key(id.to_string()) {
+        let key = ItemKey::from_text(id);
+        let Some(target) = self.current.get().and_then(|c| c.resolve_now(&key)) else { return format!("{id}: no server to resolve it") };
+        if target.key == nori_core::stream::download_key(key) {
             return format!("{id}: downloaded");
         }
         cache_words(&self.bridge, &target.key, |j| j.disk).unwrap_or_else(|| format!("{}: Kotlin could not be asked", target.key))
@@ -1175,7 +1177,7 @@ impl nori_engine::watch::Watch for PerfWatch {
             playing: s.playing,
             offloaded: s.offloaded,
             index: s.index,
-            id: s.id.as_deref(),
+            id: s.id.as_ref().map(|k| k.text()).as_deref(),
             position_ms: s.position_ms,
             in_output_ms: s.in_output_ms,
             quiet_ms: s.quiet_ms,
@@ -1237,13 +1239,13 @@ struct AndroidLibrary {
     queue: Arc<nori_core::queue::Session>,
     current: Arc<CurrentClient>,
     analyses: Arc<Analyses>,
-    stations: Arc<Mutex<Vec<(String, String)>>>,
+    stations: Arc<Mutex<Vec<(ItemKey, String)>>>,
     ahead: Arc<Ahead>,
 }
 
 impl Library for AndroidLibrary {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
-        if is_radio(id) {
+    fn locate(&mut self, id: &ItemKey) -> Result<Located, String> {
+        if is_radio(&id.id) {
             let bytes: Arc<dyn ByteSource> = Arc::new(JavaBytes { bridge: self.bridge.clone(), key: String::new(), ahead: self.ahead.clone() });
             let station = self.stations.lock().iter().find(|(s, _)| s == id).map(|(_, u)| u.clone());
             // Not a station: a provider's live stream, at the address the provider resolves.
@@ -1251,7 +1253,8 @@ impl Library for AndroidLibrary {
                 Some(url) => (url, bytes),
                 None => {
                     let client = self.current.get().ok_or("a station with no address")?;
-                    (client.resolve_now(id).url, resolving(&client, bytes))
+                    let target = client.resolve_now(id).ok_or("a live stream of a source the profile does not have")?;
+                    (target.url, resolving(&client, bytes))
                 }
             };
             log(&format!("{id} is a live stream"));
@@ -1266,8 +1269,8 @@ impl Library for AndroidLibrary {
             log(&format!("{id} opens from its file"));
             return Ok(Located { hint: Some(file.extension()), source: Source::Opened(Arc::new(move || file.open())), duration_ms, estimated: false, from_second: None });
         }
-        let target = client.resolve_now(id);
-        let download = target.key == nori_core::stream::download_key(id.to_string());
+        let target = client.resolve_now(id).ok_or("a song of a source the profile does not have")?;
+        let download = target.key == nori_core::stream::download_key(id.clone());
         // A finished download is read from its files, not copied into memory.
         if let Some(files) = download.then(|| cache_files(&self.bridge, &target.key, |j| j.downloaded)).flatten() {
             log(&format!("{id} opens from its download's {} files", files.len()));
@@ -1285,12 +1288,12 @@ impl Library for AndroidLibrary {
         Ok(Located { source: Source::Url { url: target.url, bytes }, hint, duration_ms, estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id: &ItemKey) -> WindowSong {
         nori_engine::core::about(&self.queue, id)
     }
 
     /// Fetches the core's precache targets except `next` (the engine loads that) into media3's cache.
-    fn ahead(&mut self, next: &str) {
+    fn ahead(&mut self, next: &ItemKey) {
         let client = self.current.get();
         let fetch = client.as_ref().map(|c| c.precache_now()).unwrap_or_default();
         let bytes: Arc<dyn ByteSource> = Arc::new(AheadBytes(self.bridge.clone()));
@@ -1298,17 +1301,17 @@ impl Library for AndroidLibrary {
         self.ahead.ask(Arc::new(Media3Cache(self.bridge.clone())), bytes, ahead_songs(fetch, next), Some(measuring_ahead(&self.analyses, self.queue.clone())));
     }
 
-    fn taker(&self, id: &str, hint: Option<&str>) -> Option<Listening> {
+    fn taker(&self, id: &ItemKey, hint: Option<&str>) -> Option<Listening> {
         self.analyses.measure_as_it_comes(id, hint, false)
     }
 
     /// The song played nothing and will be refetched: drops its stream cache entry (never a download).
-    fn forget(&mut self, id: &str) {
-        if is_radio(id) {
+    fn forget(&mut self, id: &ItemKey) {
+        if is_radio(&id.id) {
             return;
         }
-        let Some(target) = self.current.get().map(|c| c.resolve_now(id)) else { return };
-        if target.key == nori_core::stream::download_key(id.to_string()) {
+        let Some(target) = self.current.get().and_then(|c| c.resolve_now(id)) else { return };
+        if target.key == nori_core::stream::download_key(id.clone()) {
             return;
         }
         let said = cache_words(&self.bridge, &target.key, |j| j.forget).unwrap_or_else(|| "Kotlin could not be asked".into());
@@ -1380,14 +1383,14 @@ impl Events {
         };
         let (kind, index, text) = match e {
             Event::State(s) => (EVENT_STATE, state_code(s), String::new()),
-            Event::Song { index, id, .. } => (EVENT_SONG, index as i32, id),
-            Event::Looped { index, id, .. } => (EVENT_LOOPED, index as i32, id),
+            Event::Song { index, id, .. } => (EVENT_SONG, index as i32, id.text().into_owned()),
+            Event::Looped { index, id, .. } => (EVENT_LOOPED, index as i32, id.text().into_owned()),
             Event::Title(t) => (EVENT_TITLE, -1, t),
             Event::Bridge { .. } => (EVENT_BRIDGE, -1, String::new()),
             Event::Mixing(on) => (EVENT_MIXING, on as i32, String::new()),
             // Kotlin reads the position from the status.
             Event::Placed { index, .. } => (EVENT_PLACED, index as i32, String::new()),
-            Event::Error { id, message } => (EVENT_ERROR, -1, if id.is_empty() { message } else { format!("{id}: {message}") }),
+            Event::Error { id, message } => (EVENT_ERROR, -1, match id { None => message, Some(id) => format!("{id}: {message}") }),
             // Kotlin follows the route itself (the track's routing listener).
             Event::Output { .. } => return,
             Event::Stopped { .. } => (EVENT_STOPPED, -1, String::new()),
@@ -1444,7 +1447,7 @@ struct Player {
     events: Arc<Events>,
     offload: Arc<OffloadEvents>,
     /// Queued radio stations: (id, url).
-    stations: Arc<Mutex<Vec<(String, String)>>>,
+    stations: Arc<Mutex<Vec<(ItemKey, String)>>>,
     /// The last seek target and when it was asked: shown as the position until the engine has taken it,
     /// since media3 reads the position right after a seek returns.
     jumped: Mutex<Option<(i64, Instant)>>,
@@ -1752,7 +1755,7 @@ extern "system" fn cast_to(h: jlong, plugins: jlong, covers: jlong) {
             nori_plugins::Card::Sink(sink) => {
                 let current = p.current.clone();
                 let cover: nori_engine::core::CoverFile = Box::new(move |art, size| {
-                    let address = current.get()?.cover_address(art.to_string(), nori_core::covers::cover_rendition(size));
+                    let address = current.get()?.core().cover_address(art.to_string(), nori_core::covers::cover_rendition(size))?;
                     let mut file = Vec::new();
                     crate::covers::kept(covers, &address, &mut file).then_some(file)
                 });
@@ -1900,7 +1903,7 @@ extern "system" fn pcm_why(env: JNIEnv, _: JClass, h: jlong) -> jstring {
 /// Registers the stream `url` of the radio station queued as `id`.
 extern "system" fn radio(env: JNIEnv, _: JClass, h: jlong, id: JString, url: JString) {
     let Some(p) = player(h) else { return };
-    let (Some(id), Some(url)) = (crate::string(&env, &id), crate::string(&env, &url)) else { return };
+    let (Some(id), Some(url)) = (crate::key_of_text(&env, &id), crate::string(&env, &url)) else { return };
     let mut s = p.stations.lock();
     s.retain(|(i, _)| *i != id);
     s.push((id, url));

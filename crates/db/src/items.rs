@@ -3,7 +3,7 @@
 //! Nested fields are packed: replay gain as six little-endian f32 (NaN for none), lists as text joined
 //! by unit and record separators.
 
-use nori_model::{Album, Artist, ArtistRef, ExplicitStatus, ReplayGain, Song};
+use nori_model::{Album, Artist, ArtistRef, ExplicitStatus, Keyed, ReplayGain, Song};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row};
 
@@ -43,27 +43,27 @@ CREATE TABLE IF NOT EXISTS downloads(server TEXT NOT NULL, id TEXT NOT NULL, ts 
   PRIMARY KEY(server, id)) WITHOUT ROWID;
 ";
 
-/// The statement that adds a download: id ?1, queued at ?2, then the song's columns.
+/// The statement that adds a download to the rows of its song's source: id ?1, queued at ?2, the source
+/// ?3 (NULL: the connection's own), then the song's columns.
 pub fn add_download_sql() -> String {
-    let marks = (0..Song::COLUMNS.len()).map(|k| format!("?{}", k + 3)).collect::<Vec<_>>().join(", ");
-    format!("INSERT INTO downloads(server, id, ts, {}) VALUES(sid(), ?1, ?2, {marks})", Song::COLUMNS.join(", "))
+    let marks = (0..Song::COLUMNS.len()).map(|k| format!("?{}", k + 4)).collect::<Vec<_>>().join(", ");
+    format!("INSERT INTO downloads(server, id, ts, {}) VALUES(coalesce(?3, sid()), ?1, ?2, {marks})", Song::COLUMNS.join(", "))
 }
 
 /// [`add_download_sql`]'s parameters for `song` queued at `ts`.
 pub fn download_params(song: &Song, ts: i64) -> Vec<Value> {
-    let mut p = vec![Value::Text(song.id.clone()), Value::Integer(ts)];
+    let mut p = vec![Value::Text(song.id.clone()), Value::Integer(ts), song.source.clone().map_or(Value::Null, Value::Text)];
     p.extend(song.values());
     p
 }
 
-/// A song's columns, in [`song`]'s order; the query names the table `i`.
-pub const SONG: &str = "i.id, i.title, i.album, i.artist, i.album_id, i.artist_id, i.cover_art, i.duration, i.track, i.disc_number, i.year, i.genre, i.suffix, i.content_type, i.bit_rate, i.size, i.sampling_rate, i.bit_depth, i.user_rating, i.starred, i.is_external, i.replay_gain, i.artists, i.created, i.play_count, i.played, i.path, i.explicit_status, i.channel_count, i.music_brainz_id, i.bpm, i.comment";
-/// How many columns [`SONG`] is, for the ones a query selects after it.
-pub const SONG_LEN: usize = 32;
-/// An album's columns, in [`album`]'s order.
-pub const ALBUM: &str = "i.id, i.name, i.artist, i.artist_id, i.cover_art, i.song_count, i.duration, i.year, i.genre, i.starred, i.is_external, i.release_types, i.is_compilation, i.user_rating, i.play_count, i.created, i.explicit_status, i.music_brainz_id";
-/// An artist's columns, in [`artist`]'s order.
-pub const ARTIST: &str = "i.id, i.name, i.cover_art, i.artist_image_url, i.album_count, i.starred, i.is_external";
+/// A song's columns, in [`song`]'s order; the query names the table `i`. The last is the source whose
+/// rows it is in: NULL for the connection's own ([`crate::IN_PROFILE`]).
+pub const SONG: &str = "i.id, i.title, i.album, i.artist, i.album_id, i.artist_id, i.cover_art, i.duration, i.track, i.disc_number, i.year, i.genre, i.suffix, i.content_type, i.bit_rate, i.size, i.sampling_rate, i.bit_depth, i.user_rating, i.starred, i.is_external, i.replay_gain, i.artists, i.created, i.play_count, i.played, i.path, i.explicit_status, i.channel_count, i.music_brainz_id, i.bpm, i.comment, nullif(i.server, sid())";
+/// An album's columns, in [`album`]'s order, its source last as in [`SONG`].
+pub const ALBUM: &str = "i.id, i.name, i.artist, i.artist_id, i.cover_art, i.song_count, i.duration, i.year, i.genre, i.starred, i.is_external, i.release_types, i.is_compilation, i.user_rating, i.play_count, i.created, i.explicit_status, i.music_brainz_id, nullif(i.server, sid())";
+/// An artist's columns, in [`artist`]'s order, its source last as in [`SONG`].
+pub const ARTIST: &str = "i.id, i.name, i.cover_art, i.artist_image_url, i.album_count, i.starred, i.is_external, nullif(i.server, sid())";
 
 const UNIT: char = '\u{1f}';
 const RECORD: char = '\u{1e}';
@@ -71,7 +71,7 @@ const RECORD: char = '\u{1e}';
 /// The song whose [`SONG`] columns start at `at`.
 pub fn song(r: &Row, at: usize) -> rusqlite::Result<Song> {
     let g = |k: usize| at + k;
-    Ok(Song {
+    let song = Song {
         id: r.get(g(0))?,
         title: text(r, g(1))?,
         album: text(r, g(2))?,
@@ -104,15 +104,18 @@ pub fn song(r: &Row, at: usize) -> rusqlite::Result<Song> {
         music_brainz_id: r.get(g(29))?,
         bpm: number(r, g(30))?,
         comment: r.get(g(31))?,
+        source: None,
+        source_marked: false,
         line: String::new(),
     }
-    .dressed())
+    .dressed();
+    Ok(in_source(song, r.get(g(32))?))
 }
 
 /// The album whose [`ALBUM`] columns start at `at`.
 pub fn album(r: &Row, at: usize) -> rusqlite::Result<Album> {
     let g = |k: usize| at + k;
-    Ok(Album {
+    let album = Album {
         id: r.get(g(0))?,
         name: text(r, g(1))?,
         artist: text(r, g(2))?,
@@ -134,15 +137,18 @@ pub fn album(r: &Row, at: usize) -> rusqlite::Result<Album> {
         // Not kept: only an artist's page orders by them, and it reads the server's answer.
         release_date: None,
         original_release_date: None,
+        source: None,
+        source_marked: false,
         subtitle: String::new(),
     }
-    .dressed())
+    .dressed();
+    Ok(in_source(album, r.get(g(18))?))
 }
 
 /// The artist whose [`ARTIST`] columns start at `at`.
 pub fn artist(r: &Row, at: usize) -> rusqlite::Result<Artist> {
     let g = |k: usize| at + k;
-    Ok(Artist {
+    let artist = Artist {
         id: r.get(g(0))?,
         name: text(r, g(1))?,
         cover_art: r.get(g(2))?,
@@ -150,7 +156,24 @@ pub fn artist(r: &Row, at: usize) -> rusqlite::Result<Artist> {
         album_count: r.get::<_, Option<i64>>(g(4))?.map(|n| n as u32),
         starred: flag(r, g(5))?,
         is_external: flag(r, g(6))?,
-    })
+        source: None,
+        source_marked: false,
+    };
+    Ok(in_source(artist, r.get(g(7))?))
+}
+
+/// `item` as the profile has it from the source its row is in (`source`, None: the connection's own).
+fn in_source<T: Keyed>(mut item: T, source: Option<String>) -> T {
+    if let Some(source) = source {
+        item.of_source(&source);
+    }
+    item
+}
+
+/// A cover's column: the cover's id in the item's own source ([`nori_model::cover_id`]); the row's
+/// `server` names the source.
+fn cover(cover: &Option<String>) -> Value {
+    cover.as_deref().map_or(Value::Null, |c| Value::Text(nori_model::cover_id(c)))
 }
 
 fn text(r: &Row, at: usize) -> rusqlite::Result<String> {
@@ -240,7 +263,7 @@ impl Item for Song {
             Value::Text(self.artist.clone()),
             opt(&self.album_id),
             opt(&self.artist_id),
-            opt(&self.cover_art),
+            cover(&self.cover_art),
             int(self.duration),
             int(self.track),
             int(self.disc_number),
@@ -288,7 +311,7 @@ impl Item for Album {
             Value::Text(self.name.clone()),
             Value::Text(self.artist.clone()),
             opt(&self.artist_id),
-            opt(&self.cover_art),
+            cover(&self.cover_art),
             int(self.song_count),
             int(self.duration),
             int(self.year),
@@ -319,7 +342,7 @@ impl Item for Artist {
     fn values(&self) -> Vec<Value> {
         vec![
             Value::Text(self.name.clone()),
-            opt(&self.cover_art),
+            cover(&self.cover_art),
             opt(&self.artist_image_url),
             self.album_count.map_or(Value::Null, int),
             int(self.starred),

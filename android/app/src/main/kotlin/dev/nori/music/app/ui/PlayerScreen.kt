@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import dev.nori.music.data.key
 import androidx.compose.animation.core.Animatable
 import dev.nori.music.data.Pending
 import androidx.compose.animation.core.animateFloatAsState
@@ -223,7 +224,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // A plugin's sleeve for the song (the artwork slot), asked once per song while the app is in front: a
     // still picture takes the cover's place, a loop plays over it while the sleeve is at rest (SleeveMotion.kt).
     // Kept while the player is put away, so a loop coming back goes on from its last frame.
-    val artwork = vm.artwork.collectAsStateWithLifecycle().value?.takeIf { it.songId == state.current?.id }?.artwork
+    val artwork = vm.artwork.collectAsStateWithLifecycle().value?.takeIf { it.song == state.current?.key }?.artwork
     val coverUrl = artwork?.takeIf { !it.looping }?.url ?: vm.cover(state.current?.coverArt, CoverSize.FULL)
     // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
     val rowUrl = vm.cover(state.current?.coverArt, CoverSize.ROW)
@@ -673,7 +674,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                                 LookText(
                                     m.artist, { live.color(CoverLook.ON_60) },
                                     Modifier.clickable(enabled = m.artistId != null) {
-                                        m.artistId?.let(nav::artist)
+                                        m.artistId?.let { nav.artist(it, source = m.source) }
                                     },
                                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -682,7 +683,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                                     LookText(
                                         album, { live.color(CoverLook.ON_45) },
                                         Modifier.clickable(enabled = m.albumId != null) {
-                                            m.albumId?.let(nav::album)
+                                            m.albumId?.let { nav.album(it, source = m.source) }
                                         },
                                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                                         maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -692,7 +693,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                         }
                     }
                     state.current?.let { s ->
-                        val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
+                        val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.key, s.starred)
                         // Out by the glyph's inset in its hit box, so the last glyph ends where the seek bar does.
                         Row(Modifier.offset(x = 8.dp), Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
                             // The seal, as on an album, an artist and a playlist. A song being "starred" while
@@ -836,11 +837,13 @@ private fun Modifier.footOnScreen(): Modifier = layout { measurable, constraints
 private data class PlayerTitleMeta(
     val key: String?, val title: String, val artist: String, val album: String,
     val artistId: String?, val albumId: String?,
+    /** The source the song comes from (null: the profile's own), where its artist and album open. */
+    val source: String?,
 )
 
 private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?) = song?.let {
-    PlayerTitleMeta(it.id, say.title(it.title), it.artist, it.album.orEmpty(), it.artistId, it.albumId)
-} ?: PlayerTitleMeta(null, say.playerIdle(radio), "", "", null, null)
+    PlayerTitleMeta(it.id, say.title(it.title), it.artist, it.album.orEmpty(), it.artistId, it.albumId, it.source)
+} ?: PlayerTitleMeta(null, say.playerIdle(radio), "", "", null, null, null)
 
 /**
  * Where the sound is going, and one tap to change it: the glyph is what plays - another device of
@@ -3270,7 +3273,7 @@ private fun Queue(vm: PlayerViewModel, actions: ActionsViewModel, showPlayer: ()
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Cover(vm.cover(s.coverArt, CoverSize.ROW), 44.dp, radius = Radius.cover)
+                            Cover(vm.cover(s.coverArt, CoverSize.ROW), 44.dp, radius = Radius.cover, mark = marked(s.sourceMarked, s.source))
                             // The song playing: its cover darkened under the playing bars, as in Apple's queue.
                             if (i == state.index) {
                                 Box(Modifier.matchParentSize().drawBehind { drawRoundRect(QUEUE_NOW_VEIL, cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx())) })

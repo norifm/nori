@@ -32,6 +32,8 @@ pub mod jam_pick;
 pub mod destination;
 pub mod providers;
 pub mod scrobblers;
+pub mod sources;
+pub mod mixed_playlists;
 mod favorites;
 #[cfg(feature = "neural-beats")]
 pub mod model_download;
@@ -52,7 +54,7 @@ pub use nori_cert as cert;
 pub use nori_local as local;
 pub use nori_automix::beat_model;
 pub use nori_devices::{autoeq, outputs};
-pub use nori_library::{menus, offer, paged, pages, rows, sketch, stars};
+pub use nori_library::{merged, menus, offer, paged, pages, rows, sketch, stars};
 pub use nori_lyrics::{follow as lyrics_follow, formats, look, lrclib, lyrics, services};
 pub use nori_net::{api, transport};
 pub use nori_perf::perf_log;
@@ -133,7 +135,7 @@ pub struct Core {
     /// The "For you" row (mixes/board.rs).
     board: Mutex<mixes::board::Board>,
     /// This session's star changes, overlaid on the server's favourites.
-    stars: Mutex<stars::StarMarks>,
+    stars: Mutex<stars::Marks>,
     /// The favourites the source listed last, under this session's marks.
     listed: Mutex<stars::Ids>,
     /// The favourites kept on this device (favorites.rs).
@@ -160,6 +162,10 @@ pub struct Core {
     rules_shown: RwLock<Option<Arc<dyn browse::RulesShown>>>,
     /// What the profile plays from (providers/).
     provider: RwLock<providers::Installed>,
+    /// The profile's other sources, in order (sources.rs).
+    sources: RwLock<Vec<sources::Source>>,
+    /// The album lists read across the sources so far, by the key of their first page (sources.rs).
+    album_lists: Mutex<std::collections::HashMap<String, nori_library::merged::ListMerge<Album>>>,
     /// The kinds of profile it opens ([`providers::Kinds`]).
     kinds: RwLock<Arc<providers::Kinds>>,
     /// What the stored queue's songs were saved from (queue.rs).
@@ -276,7 +282,7 @@ impl Core {
             db,
             server: RwLock::new(api::Server::default()),
             board: Mutex::new(board),
-            stars: Mutex::new(stars::StarMarks::default()),
+            stars: Mutex::new(stars::Marks::default()),
             listed: Mutex::default(),
             here: Mutex::default(),
             remote: Mutex::default(),
@@ -289,6 +295,8 @@ impl Core {
             rules: RwLock::new(browse::profile_rules(false)),
             rules_shown: RwLock::new(None),
             provider: RwLock::default(),
+            sources: RwLock::default(),
+            album_lists: Mutex::default(),
             kinds: RwLock::new(providers::Kinds::builtin()),
             saved_queue: Mutex::new(None),
             starts_transcodes: std::sync::atomic::AtomicBool::new(false),
@@ -350,16 +358,16 @@ impl Core {
     }
 
     /// The ids of [`Self::downloads`], same order.
-    pub fn download_ids(&self, done: bool) -> Result<Vec<String>> {
+    pub fn download_ids(&self, done: bool) -> Result<Vec<ItemKey>> {
         let c = self.db.lock();
-        let mut st = c.prepare_cached("SELECT id FROM downloads WHERE server=sid() AND done=?1 ORDER BY ts DESC")?;
-        let rows = st.query_map([done], |r| r.get::<_, String>(0))?;
+        let mut st = c.prepare_cached(concat!("SELECT nullif(server, sid()), id FROM downloads WHERE server ", db::in_profile!(), " AND done=?1 ORDER BY ts DESC"))?;
+        let rows = st.query_map([done], |r| db::key_of(r, 0))?;
         Ok(rows.filter_map(|id| id.ok()).collect())
     }
 
     pub fn downloads(&self, done: bool) -> Result<Vec<Song>> {
         let c = self.db.lock();
-        let mut st = c.prepare_cached(&format!("SELECT {} FROM downloads i WHERE server=sid() AND done=?1 ORDER BY ts DESC", db::items::SONG))?;
+        let mut st = c.prepare_cached(&format!(concat!("SELECT {} FROM downloads i WHERE server ", db::in_profile!(), " AND done=?1 ORDER BY ts DESC"), db::items::SONG))?;
         let songs = st.query_map([done], |r| db::items::song(r, 0))?.collect::<rusqlite::Result<_>>()?;
         Ok(songs)
     }
@@ -483,7 +491,7 @@ impl Core {
         Ok(())
     }
 
-    pub fn download_remove(&self, id: String) -> Result<()> {
+    pub fn download_remove(&self, id: ItemKey) -> Result<()> {
         self.download_settle(vec![id], vec![false])
     }
 
@@ -545,7 +553,7 @@ impl Core {
 #[cfg(test)]
 impl Core {
     /// Marks one queued download finished.
-    pub(crate) fn download_done(&self, id: String) -> Result<()> {
+    pub(crate) fn download_done(&self, id: ItemKey) -> Result<()> {
         self.download_settle(vec![id], vec![true])
     }
 }
