@@ -456,6 +456,8 @@ pub enum ServerKind {
     Subsonic,
     /// A plugin's provider, by the plugin's id (reverse DNS).
     Plugin { id: String },
+    /// Music files on this device.
+    Local,
 }
 
 impl ServerKind {
@@ -464,6 +466,7 @@ impl ServerKind {
         match self {
             ServerKind::Subsonic => "subsonic",
             ServerKind::Plugin { id } => id,
+            ServerKind::Local => "local",
         }
     }
 
@@ -471,6 +474,7 @@ impl ServerKind {
     pub fn from_id(id: &str) -> Option<ServerKind> {
         match id {
             "subsonic" => Some(ServerKind::Subsonic),
+            "local" => Some(ServerKind::Local),
             BUILT_IN_YOUTUBE_MUSIC => Some(ServerKind::Plugin { id: YOUTUBE_MUSIC_PLUGIN.into() }),
             // Only a plugin's id has a dot.
             p if p.contains('.') => Some(ServerKind::Plugin { id: p.to_string() }),
@@ -573,6 +577,8 @@ pub struct SavedServer {
     pub scrobble_off: bool,
     /// Where its plays go besides its server or provider.
     pub scrobblers: Vec<SavedScrobbler>,
+    /// The folders a local profile reads music from, where the user picks them (`nori_local::MusicPlace`).
+    pub folders: Vec<String>,
 }
 
 /// A scrobbling account a profile's plays go to, whatever the profile plays from.
@@ -1370,6 +1376,7 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         picture: o.get("picture").and_then(Value::as_str).map(String::from),
         scrobble_off: opt_bool(o, "scrobbleOff"),
         scrobblers: o.get("scrobblers").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(scrobbler_from).collect()),
+        folders: o.get("folders").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(Value::as_str).map(String::from).collect()),
     })
 }
 
@@ -1435,6 +1442,9 @@ fn server_json(s: &SavedServer) -> Value {
     }
     if !s.scrobblers.is_empty() {
         v["scrobblers"] = s.scrobblers.iter().map(scrobbler_json).collect();
+    }
+    if !s.folders.is_empty() {
+        v["folders"] = s.folders.clone().into();
     }
     v
 }
@@ -2806,8 +2816,8 @@ mod tests {
     /// is a server's.
     #[test]
     fn kinds_are_stored_by_name() {
-        for kind in [ServerKind::Subsonic, ServerKind::Plugin { id: "fm.nori.youtube-music".into() }] {
-            let p = SavedServer { id: "p".into(), kind, user: "u".into(), ..SavedServer::default() };
+        for kind in [ServerKind::Subsonic, ServerKind::Plugin { id: "fm.nori.youtube-music".into() }, ServerKind::Local] {
+            let p = SavedServer { id: "p".into(), kind, user: "u".into(), folders: vec!["/m/a".into(), "/m/b".into()], ..SavedServer::default() };
             assert_eq!(server_from(&server_json(&p)), Some(p));
         }
         assert_eq!(server_from(&serde_json::json!({"id": "a", "url": "https://x"})).unwrap().kind, ServerKind::Subsonic, "saved before kinds");

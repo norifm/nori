@@ -224,6 +224,8 @@ pub enum Refusal {
     /// The songs are another source's than the device plays from (a Subsonic server's to a YouTube
     /// Music profile): they would not play there.
     OtherSource,
+    /// The songs are files on one device, which play only there: one of the two plays local files.
+    DeviceFiles,
 }
 
 /// A song as a controller lists it.

@@ -44,6 +44,8 @@ pub enum Msg {
     Search(SearchView),
     /// A status bar message.
     Note { text: String, error: bool },
+    /// The offline index was filled (said in these words): every page read from it is read again.
+    Indexed(String),
     /// A plugin's cast started, changed or ended (None).
     Cast(Option<nori_plugins::Cast>),
     /// Read again what `Req` reads, where it is on screen.
@@ -141,6 +143,7 @@ impl Msg {
             Msg::Lyrics(now) => format!("lyrics for {:?}", now.song()),
             Msg::Search(v) => format!("search results for {:?}", v.query),
             Msg::Note { text, error } => format!("note {text:?} error={error}"),
+            Msg::Indexed(text) => format!("indexed: {text}"),
             Msg::Cast(c) => format!("cast {c:?}"),
             Msg::Offer(o) => format!("queue offered: {}", o.is_some()),
             Msg::Reload(r) => format!("read {r:?} again"),
@@ -521,7 +524,7 @@ fn worded(s: Said) -> Option<Msg> {
             Note::DownloadFailed(e) => note(format!("Could not download: {e}"), true),
             Note::StarFailed(e) => note(format!("Could not change the favorite: {}", net_error(&e)), true),
             Note::Indexing => note("Filling the offline index…".into(), false),
-            Note::Indexed(t) => note(format!("Offline index: {} songs, {} albums, {} artists", t.songs, t.albums, t.artists), false),
+            Note::Indexed(t) => Msg::Indexed(format!("Offline index: {} songs, {} albums, {} artists", t.songs, t.albums, t.artists)),
             Note::IndexStopped(e) => note(format!("The offline index stopped: {}", net_error(&e)), true),
             Note::CurveFailed(e) => note(format!("Could not fetch the AutoEQ curve: {}", net_error(&e)), true),
             Note::Done(chore) => note(

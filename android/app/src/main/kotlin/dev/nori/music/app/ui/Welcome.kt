@@ -176,6 +176,7 @@ private fun SourceLine(
             when (val kind = source.kind) {
                 is dev.nori.music.ffi.settings.ServerKind.Plugin -> ProviderLine(plugins, kind.id, offers.firstOrNull { it.id == kind.id }, words.name, null, divider, tag, trailing, onClick)
                 dev.nori.music.ffi.settings.ServerKind.Subsonic -> ProviderLine(Iconoir.Server, words.name, say.providerSubsonicAbout, divider, tag, trailing, onClick)
+                dev.nori.music.ffi.settings.ServerKind.Local -> ProviderLine(Iconoir.Folder, words.name, say.providerLocalAbout, divider, tag, trailing, onClick)
             }
         }
         is WelcomeSource.Offered -> offers.firstOrNull { it.id == source.plugin }?.let { o ->

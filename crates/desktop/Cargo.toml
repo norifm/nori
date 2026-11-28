@@ -43,6 +43,9 @@ pollster = "0.4"
 # Slint's Skia version, for measuring lyric text in sung.rs.
 skia-safe = "0.153.3"
 arboard = { version = "3", default-features = false }
+# The system's folder picker, for a local profile's folders (GTK's on Linux, which the sign-in window
+# links already).
+rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 # A plugin's moving cover (motion.rs): H.264 in software, built from source.
 openh264 = "0.9"
 

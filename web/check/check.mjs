@@ -208,6 +208,7 @@ if (!only || only.includes("profile")) {
   // Added: the same server at another address is a profile of its own, open from now on.
   await page.click("#add-profile-row");
   const address = `${new URL(url).origin}/.`;
+  await page.click("#add-profile [data-kind=subsonic]");
   await page.type("#add-profile [data-field=url]", address);
   await page.type("#add-profile [data-field=user]", "admin");
   await page.type("#add-profile [data-field=password]", "admin");

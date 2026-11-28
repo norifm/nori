@@ -142,7 +142,9 @@ impl Root {
             host.use_bluetooth(Arc::new(crate::bluez::Bluez::new(Arc::downgrade(&host))), true);
             #[cfg(target_os = "macos")]
             host.use_bluetooth(Arc::new(crate::macbt::MacBluetooth::new(Arc::downgrade(&host))), true);
-            Plugged { kinds: nori_core::providers::Kinds::with_plugins(host.clone()), host, watched }
+            let kinds = nori_core::providers::Kinds::with_plugins(host.clone());
+            kinds.set_files(Arc::new(nori_core::local::Disk::folders()));
+            Plugged { kinds, host, watched }
         })
     }
 

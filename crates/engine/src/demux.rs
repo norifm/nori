@@ -318,18 +318,6 @@ pub struct CodedSong {
     pub from_frame: i64,
 }
 
-fn codec_of(id: AudioCodecId) -> Option<Codec> {
-    Some(match id {
-        CODEC_ID_MP3 => Codec::Mp3,
-        CODEC_ID_FLAC => Codec::Flac,
-        CODEC_ID_AAC => Codec::Aac,
-        CODEC_ID_VORBIS => Codec::Vorbis,
-        CODEC_ID_ALAC => Codec::Alac,
-        CODEC_ID_OPUS => Codec::Opus,
-        _ => return None,
-    })
-}
-
 /// A track's time base, to count its stamps in frames: a WebM's count milliseconds.
 #[derive(Clone, Copy)]
 struct Ticks {
@@ -604,7 +592,7 @@ impl Stream {
         let params = track.codec_params.as_ref().and_then(|p| p.audio()).ok_or("no audio in it")?;
         let rate = params.sample_rate.ok_or("no sample rate")?;
         let channels = params.channels.as_ref().map_or(2, |c| c.count()).max(1);
-        let codec = codec_of(params.codec);
+        let codec = Codec::of(params.codec);
         let delay_known = track.delay.is_some();
         // The platform decodes what it can when playing.
         let later = match codec {
@@ -970,7 +958,7 @@ impl Stream {
         let Some(reader) = self.reader.container() else { return false };
         let Some(track) = reader.default_track(TrackType::Audio) else { return false };
         let Some(params) = track.codec_params.as_ref().and_then(|p| p.audio()) else { return false };
-        let (Some(codec), Some(rate)) = (codec_of(params.codec), params.sample_rate) else { return false };
+        let (Some(codec), Some(rate)) = (Codec::of(params.codec), params.sample_rate) else { return false };
         let channels = params.channels.as_ref().map_or(2, |c| c.count()).max(1);
         let id = track.id;
         let Ok(dec) = Decoder::new(codec, rate, channels, params.extra_data.as_deref(), false) else { return false };

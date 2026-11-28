@@ -268,7 +268,7 @@ class PluginHost(
     fun openClient(client: dev.nori.music.ffi.Client) = kinds.openClient(client)
 
     /** nori's own kinds and the enabled plugins' providers, for every core and the add form. */
-    val kinds: Kinds by lazy { Kinds.withPlugins(plugins) }
+    val kinds: Kinds by lazy { Kinds.withPlugins(plugins).also { it.setDeviceMusic(dev.nori.music.data.MediaLibrary(context)) } }
 
     /** Plugin [id]'s word [key] with [args] in its `{0}`, `{1}`. */
     private fun said(id: String, key: String, args: List<String>): String =

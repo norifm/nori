@@ -266,6 +266,15 @@ class Nori private constructor(private val context: Context) {
         library.onProfileChanged()
         remotes.refresh()
         leftJam?.let { removeServer(it.id) }
+        rescan()
+    }
+
+    /**
+     * Reads a library of files again where the profile's is one (the core's `ProfileRules::rescans`): as the
+     * app comes to the front and as a profile opens. Only files new or changed are read; nothing polls.
+     */
+    fun rescan() {
+        if (settings.value.loggedIn) pluginScope.launch { if (rules.rescans) runCatching { library.sync() } }
     }
 
     /** Settings that do not need the server asked again: headers, Wi-Fi only, music folder, name. */

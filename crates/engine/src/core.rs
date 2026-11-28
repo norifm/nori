@@ -250,6 +250,9 @@ impl Library for CoreLibrary {
         if let Some(path) = kept {
             return Ok(Located { source: Source::File(vec![path]), hint: None, duration_ms, estimated: false, from_second: None });
         }
+        if let Some(file) = self.client.file_of(id) {
+            return Ok(Located { hint: Some(file.extension()), source: Source::Opened(Arc::new(move || file.open())), duration_ms, estimated: false, from_second: None });
+        }
         let target = self.client.resolve(id.to_string(), false, self.client.metered());
         if nori_core::queue::is_radio(id) {
             return Ok(Located { source: Source::Live { url: target.url, bytes: self.bytes.clone() }, hint: None, duration_ms: None, estimated: false, from_second: None });

@@ -53,7 +53,8 @@ blocks.
 - data: `nori-model` (records, `CoreError`, the log), `nori-db` (SQLite with FTS5), `nori-settings`
 - network: `nori-net` (request signing, the `Transport` trait, stream cache keys)
 - music: `nori-library` (browse, search, mixes, page layouts, menus), `nori-queue` (the played queue,
-  autofill, scrobbling), `nori-transfers` (downloads), `nori-lyrics`
+  autofill, scrobbling), `nori-transfers` (downloads), `nori-lyrics`, `nori-local` (the music files on
+  the device)
 - sound and look: `nori-devices` (outputs, AutoEQ), `nori-automix`, `nori-covers`, `nori-look` (colors
   from covers, themes)
 - the rest: `nori-remote` (remote control and jams), `nori-plugins` (the plugin host), `nori-backup`,

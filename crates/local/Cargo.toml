@@ -1,0 +1,32 @@
+[package]
+name = "nori-local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local files: music on this device read as a library: finding the files, their tags and pictures, a song's identity across moves, albums and artists"
+
+[lib]
+name = "nori_local"
+
+[features]
+# uniffi exports for the Android app's Kotlin bindings.
+ffi = ["dep:uniffi", "nori-model/ffi"]
+# Tagged music files for tests (`testing`), for this crate's tests and its clients'.
+testing = ["nori-player/synth"]
+
+[dependencies]
+uniffi = { workspace = true, optional = true }
+serde = { version = "1", features = ["derive"] }
+nori-model = { path = "../model" }
+# Which codecs nori decodes, so a file it cannot play is left out.
+nori-player = { path = "../player", default-features = false, features = ["std"] }
+# The format readers the engine plays through, read here for tags, pictures and length.
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "aac", "isomp4", "ogg", "mkv", "wav", "pcm"] }
+# Tags before and after the audio (ID3v2, ID3v1, APE), registered on this crate's own probe only: the
+# engine's probe stays without them.
+symphonia-metadata = { version = "0.6.1", default-features = false, features = ["id3v1", "id3v2", "ape"] }
+
+[dev-dependencies]
+nori-testdir = { path = "../testdir" }
+nori-local = { path = ".", features = ["testing"] }
+

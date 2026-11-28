@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS items(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL
   UNIQUE(server, kind, id));
 CREATE INDEX IF NOT EXISTS items_genre ON items(server, genre COLLATE NOCASE) WHERE kind=2;
 CREATE INDEX IF NOT EXISTS items_artist ON items(server, artist_id) WHERE kind=2;
+CREATE INDEX IF NOT EXISTS items_album ON items(server, album_id) WHERE kind=2;
 CREATE INDEX IF NOT EXISTS items_year ON items(server, year) WHERE kind=2;
 CREATE INDEX IF NOT EXISTS items_duration ON items(server, duration) WHERE kind=2;
 CREATE INDEX IF NOT EXISTS items_created ON items(server, created) WHERE kind=2;

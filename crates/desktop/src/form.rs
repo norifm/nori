@@ -9,14 +9,14 @@ use std::rc::Rc;
 
 use nori_core::providers::{FieldSpec, FirstStep, FormField, Platform, ProviderInfo};
 use nori_core::settings::SavedServer;
-use slint::{Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::{words, AppWindow, FormLine};
+use crate::{words, AppWindow, FolderLine, FormLine};
 
 /// The form's fields by their `FormLine::field`.
-const FIELDS: [FormField; 12] = {
+const FIELDS: [FormField; 13] = {
     use FormField::*;
-    [Name, Address, User, Password, SecondAddress, ApiKey, Headers, LegacyAuth, SelfSigned, WifiOnly, ClientCert, Proxy]
+    [Name, Address, User, Password, SecondAddress, ApiKey, Headers, LegacyAuth, SelfSigned, WifiOnly, ClientCert, Proxy, Folders]
 };
 
 fn field_number(what: FormField) -> i32 {
@@ -100,6 +100,7 @@ impl Form {
             SecondAddress => (0, p.alt_url.clone(), false),
             ApiKey => (0, p.api_key.clone(), false),
             Headers => (1, self.headers.clone(), false),
+            Folders => (3, set(!p.folders.is_empty(), folder_names(&p.folders)), false),
             LegacyAuth => (2, String::new(), p.legacy_auth),
             SelfSigned => (2, String::new(), p.allow_self_signed),
             WifiOnly => (2, String::new(), p.wifi_only),
@@ -171,8 +172,39 @@ impl Form {
                 ui.set_login_cert_error("".into());
                 ui.set_login_cert_open(true);
             }
+            Some(FormField::Folders) => {
+                self.folders_drawn(ui);
+                ui.set_login_folders_open(true);
+            }
             _ => {}
         }
+    }
+
+    /// The folders' sheet lists the folders as they are now.
+    fn folders_drawn(&self, ui: &AppWindow) {
+        let folders: Vec<FolderLine> = self.typed.folders.iter().map(|f| FolderLine { name: folder_name(f).into(), place: folder_place(f).into() }).collect();
+        ui.set_login_folders(ModelRc::from(Rc::new(VecModel::from(folders))));
+    }
+
+    /// The folder the system's picker gave, read from now on.
+    pub fn folder_added(&mut self, ui: &AppWindow, folder: String) {
+        if !self.typed.folders.contains(&folder) {
+            self.typed.folders.push(folder);
+        }
+        self.folders_changed(ui);
+    }
+
+    /// The folder at `at` of the sheet, no longer read.
+    pub fn folder_removed(&mut self, ui: &AppWindow, at: usize) {
+        if at < self.typed.folders.len() {
+            self.typed.folders.remove(at);
+        }
+        self.folders_changed(ui);
+    }
+
+    fn folders_changed(&self, ui: &AppWindow) {
+        self.redrawn(FormField::Folders);
+        self.folders_drawn(ui);
     }
 
     /// The proxy's sheet saved what was typed in it ([`crate::app::proxy_sheet_saved`]).
@@ -239,6 +271,37 @@ impl Form {
     }
 }
 
+/// Folders as their line shows them: their own names.
+fn folder_names(folders: &[String]) -> String {
+    folders.iter().map(|f| folder_name(f)).collect::<Vec<_>>().join(", ")
+}
+
+/// A folder's own name; the whole path for a root.
+fn folder_name(folder: &str) -> String {
+    Path::new(folder).file_name().map_or_else(|| folder.to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// The folder `folder` is in; empty for a root.
+fn folder_place(folder: &str) -> String {
+    Path::new(folder).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// Asks the system's folder picker for a folder, off the window's thread, and hands it to the window's
+/// `folder-picked`; nothing when the picker is closed.
+pub fn pick_folder(ui: &AppWindow) {
+    let ui = ui.as_weak();
+    let start = nori_core::local::music_folder();
+    std::thread::spawn(move || {
+        let mut dialog = rfd::AsyncFileDialog::new();
+        if let Some(dir) = start {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(picked) = pollster::block_on(dialog.pick_folder()) else { return };
+        let folder = picked.path().to_string_lossy().into_owned();
+        let _ = ui.upgrade_in_event_loop(move |ui| ui.invoke_folder_picked(folder.into()));
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -289,6 +352,8 @@ mod tests {
             ui.on_cert_saved(move |path, password| f.borrow_mut().cert_saved(&w.unwrap(), &data, &path, password.into()));
             let (w, f) = wired(&ui);
             ui.on_cert_removed(move || f.borrow_mut().cert_removed(&w.unwrap()));
+            let (w, f) = wired(&ui);
+            ui.on_folder_removed(move |at| f.borrow_mut().folder_removed(&w.unwrap(), at as usize));
             ui.show().unwrap();
             let shown = Shown { ui, form };
             shown.settle();
@@ -480,6 +545,27 @@ mod tests {
         s.press_on(&s.line("Proxy"));
         s.click("Remove proxy");
         assert_eq!((s.value("Proxy"), s.draft(None).proxy), ("None".to_string(), None), "removed");
+    }
+
+    /// A saved local profile's form is its folders' line, which opens their sheet: a folder picked is read
+    /// from then on, one taken off no longer, and Save keeps what the sheet has.
+    #[test]
+    fn a_local_profiles_folders_change_through_their_sheet() {
+        let data = nori_testdir::TempDir::new("form");
+        let kinds = nori_core::providers::Kinds::builtin();
+        kinds.set_files(std::sync::Arc::new(nori_core::local::Disk::folders()));
+        let local = kinds.providers().into_iter().find(|i| i.kind == ServerKind::Local).unwrap();
+        let saved = SavedServer { id: "l1".into(), kind: ServerKind::Local, folders: vec!["/home/ann/Music".into()], ..Default::default() };
+        let s = Shown::new(local, saved.clone(), false, data.path());
+        assert_eq!((s.boxes(), s.lines(), s.value("Music folders")), (0, vec!["Music folders".to_string()], "Music".to_string()));
+        s.press_on(&s.line("Music folders"));
+        assert!(s.ui.get_login_folders_open() && s.said("Remove Music"), "its sheet lists the folder");
+        s.form.borrow_mut().folder_added(&s.ui, "/mnt/rips".into());
+        s.form.borrow_mut().folder_added(&s.ui, "/mnt/rips".into());
+        s.settle();
+        s.click("Remove Music");
+        s.click("Done");
+        assert_eq!((s.value("Music folders"), s.draft(Some(saved)).folders), ("rips".to_string(), vec!["/mnt/rips".to_string()]));
     }
 
     /// A saved profile's Edit page opens Advanced settings on a value set there, its values in their lines

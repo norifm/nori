@@ -15,6 +15,8 @@ the owner asks for it, and delete its line once it ships.
 - Filter chips by type in search: songs, albums, artists, playlists.
 - "Appears on" for artists.
 - Sync the library on app open when the last sync is older than N hours, Wi-Fi only.
+- Local files: lyrics from a song's tags and `.lrc` files beside it; playlists made in nori written as
+  `.m3u` files.
 
 **Player**
 - Sleep timer: end of queue, and a fade out.
@@ -83,5 +85,5 @@ When everything above is done; each behind a switch:
 
 ## Not planned
 
-Other server types, local files, Wear OS, audiobook mode, star ratings, Genius, a grid/list
+Other server types, Wear OS, audiobook mode, star ratings, Genius, a grid/list
 toggle, the A-Z rail.

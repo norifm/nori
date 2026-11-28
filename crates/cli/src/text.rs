@@ -25,6 +25,7 @@ pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords
     match kind {
         ServerKind::Subsonic => ProviderWords { name: "OpenSubsonic".into(), no_user: "API key" },
         ServerKind::Plugin { id } => ProviderWords { name: plugin_name.unwrap_or_else(|| id.clone()), no_user: "no account" },
+        ServerKind::Local => ProviderWords { name: "Local files".into(), no_user: "on this computer" },
     }
 }
 
@@ -87,6 +88,7 @@ pub fn login_label(what: nori_core::providers::FormField) -> &'static str {
         WifiOnly => "Wi-Fi only",
         ClientCert => "Client certificate",
         Proxy => PROXY,
+        Folders => "Music folders",
     }
 }
 
@@ -100,7 +102,7 @@ pub fn login_hint(what: nori_core::providers::FormField) -> &'static str {
         LegacyAuth => "For old servers without token auth",
         SelfSigned => "Only for your own server",
         WifiOnly => "Never over mobile data",
-        Name | Address | User | Password | ClientCert | Proxy => "",
+        Name | Address | User | Password | ClientCert | Proxy | Folders => "",
     }
 }
 
@@ -140,6 +142,16 @@ pub fn provider_sign_in(name: &str) -> String {
     format!("Sign in to {name}")
 }
 pub const PROVIDER_SUBSONIC_ABOUT: &str = "Navidrome and other servers";
+pub const PROVIDER_LOCAL_ABOUT: &str = "Music in folders on this computer";
+
+/// What a row offering nori's own `kind` says under its name; a plugin's says nothing there.
+pub fn provider_about(kind: &ServerKind) -> Option<&'static str> {
+    match kind {
+        ServerKind::Subsonic => Some(PROVIDER_SUBSONIC_ABOUT),
+        ServerKind::Local => Some(PROVIDER_LOCAL_ABOUT),
+        ServerKind::Plugin { .. } => None,
+    }
+}
 pub const WELCOME_TITLE: &str = "Welcome to nori";
 pub const WELCOME_WHERE: &str = "Where's your music?";
 pub const WELCOME_KEYS: &str = "↑ ↓ choose · enter pick · c continue · r restore · q quit";
@@ -1557,6 +1569,7 @@ pub fn device_line(d: &RemoteDevice) -> String {
         Some(Refusal::Unknown) => "That is no longer there.",
         Some(Refusal::TooMany) => "Too many songs waiting.",
         Some(Refusal::OtherSource) => "That device plays from another source.",
+        Some(Refusal::DeviceFiles) => "Its songs are files on one device and play only there.",
         None => "",
     };
     if !refused.is_empty() {

@@ -1262,6 +1262,10 @@ impl Library for AndroidLibrary {
         // Format hint from a transcoded stream's key; a download (`dl:<id>`) may be transcoded too, so its
         // file is sniffed instead.
         let client = self.current.get().ok_or("no server to play from")?;
+        if let Some(file) = client.file_of(id) {
+            log(&format!("{id} opens from its file"));
+            return Ok(Located { hint: Some(file.extension()), source: Source::Opened(Arc::new(move || file.open())), duration_ms, estimated: false, from_second: None });
+        }
         let target = client.resolve_now(id);
         let download = target.key == nori_core::stream::download_key(id.to_string());
         // A finished download is read from its files, not copied into memory.

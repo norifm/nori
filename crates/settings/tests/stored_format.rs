@@ -49,6 +49,13 @@ fn sample() -> StoredPrefs {
                 session: String::new(),
                 user: "listener".into(),
             }],
+            folders: Vec::new(),
+        }, SavedServer {
+            id: "b2".into(),
+            kind: ServerKind::Local,
+            name: "Records".into(),
+            folders: vec!["/home/me/Music".into(), "/mnt/disk/Rips".into()],
+            ..SavedServer::default()
         }],
         active_server_id: "a1".into(),
         wifi: SavedQuality { bit_rate: 320, format: "mp3".into() },

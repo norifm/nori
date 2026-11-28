@@ -52,6 +52,8 @@
 	<string>iphoneos</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>MinimumOSVersion</key>
 	<string>12.2</string>
 	<key>UIDeviceFamily</key>

@@ -68,6 +68,19 @@ pub(crate) mod counting {
 }
 
 use std::ffi::{c_char, CString};
+use std::sync::Arc;
+
+use nori_core::providers::Kinds;
+
+/// The kinds of profile the iPod opens: a server's, and its local files, the songs copied into the app's
+/// shared Documents folder through Finder's or iTunes' file sharing.
+pub(crate) fn kinds() -> Arc<Kinds> {
+    let kinds = Kinds::builtin();
+    if let Ok(home) = std::env::var("HOME") {
+        kinds.set_files(Arc::new(nori_core::local::Disk::device(format!("{home}/Documents"))));
+    }
+    kinds
+}
 
 /// The workspace version, for the about page and the log. A static string: never freed.
 #[no_mangle]

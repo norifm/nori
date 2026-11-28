@@ -49,6 +49,7 @@ pub use nori_model::{alog, deciders, heap, lines, model, numbers, CoreError, Sma
 pub use nori_backup as backup;
 #[cfg(feature = "cert")]
 pub use nori_cert as cert;
+pub use nori_local as local;
 pub use nori_automix::beat_model;
 pub use nori_devices::{autoeq, outputs};
 pub use nori_library::{menus, offer, paged, pages, rows, sketch, stars};

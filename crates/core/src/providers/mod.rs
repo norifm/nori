@@ -9,6 +9,7 @@ mod plugin;
 #[cfg(feature = "plugins")]
 mod plugged;
 pub(crate) mod hosted;
+pub mod local;
 pub mod flow;
 pub mod code;
 #[cfg(test)]
@@ -113,6 +114,22 @@ pub trait Provider: Send + Sync {
     /// What every cover address starts with, the cover's id and size appended ([`crate::covers::cover_url_into`]);
     /// None when each is the provider's own.
     fn cover_prefix(&self, _core: &Core) -> Option<String> {
+        None
+    }
+
+    /// The file on this device song `id` plays from, whatever the stream says; None for a song that streams.
+    fn file(&self, _client: &Client, _id: &str) -> Option<local::SongFile> {
+        None
+    }
+
+    /// Fills the offline index from the source: everything it lists, what it no longer lists dropped.
+    /// What the index holds after.
+    async fn sync(&self, _client: &Client) -> NetResult<crate::IngestStats> {
+        Err(nowhere("library to sync"))
+    }
+
+    /// How far a [`Provider::sync`] running is; None when none is, or when it cannot say.
+    fn sync_progress(&self) -> Option<local::SyncProgress> {
         None
     }
 
@@ -283,9 +300,10 @@ impl ProviderInfo {
         }
     }
 
-    /// What choosing this kind on the first screen leads to. A name alone is nothing to ask.
+    /// What choosing this kind on the first screen leads to. A name alone is nothing to ask, nor is what
+    /// only a saved profile's form shows.
     pub fn first_step(&self) -> FirstStep {
-        let asks = self.fields.iter().any(|f| !f.advanced && f.what != FormField::Name);
+        let asks = self.fields.iter().any(|f| !f.advanced && f.what != FormField::Name && f.what.asked_adding());
         match (asks, self.signs_in_elsewhere()) {
             (true, _) => FirstStep::Form,
             (false, true) => FirstStep::Account,
@@ -372,6 +390,16 @@ pub enum FormField {
     /// entry opens (`nori_settings::proxy::proxy_from_form`). Every kind's ([`PROXY_FIELD`]), as all of
     /// a profile's connections are nori's.
     Proxy,
+    /// `folders`: where a local profile's music is.
+    Folders,
+}
+
+impl FormField {
+    /// Whether a form adding a profile shows it: a local profile starts from the platform's own folders,
+    /// and its saved form changes them.
+    fn asked_adding(self) -> bool {
+        self != FormField::Folders
+    }
 }
 
 /// The proxy's entry, under every kind's advanced part.
@@ -393,6 +421,7 @@ fn field_set(what: FormField, profile: &SavedServer) -> bool {
         FormField::WifiOnly => profile.wifi_only,
         FormField::ClientCert => !profile.client_cert.is_empty(),
         FormField::Proxy => profile.proxy.is_some(),
+        FormField::Folders => !profile.folders.is_empty(),
     }
 }
 
@@ -418,14 +447,14 @@ impl Platform {
 
 /// The fields of `info`'s form on `platform`, in its order, as they show for `profile` as typed: those the
 /// platform honors; a user and password step aside while an API key is given; a saved profile (`adding`
-/// false) is renamed from its menu, not on its form.
+/// false) is renamed from its menu, not on its form, and only its form changes a local profile's folders.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn form_fields(info: &ProviderInfo, platform: Platform, profile: &SavedServer, adding: bool) -> Vec<FieldSpec> {
     let keyed = field_set(FormField::ApiKey, profile) && info.asks(FormField::ApiKey);
     let shown = |what: FormField| match what {
         FormField::User | FormField::Password => !keyed,
         FormField::Name => adding,
-        _ => true,
+        what => what.asked_adding() || !adding,
     };
     info.fields.iter().copied().filter(|f| platform.honors(f.what) && shown(f.what)).collect()
 }
@@ -448,6 +477,7 @@ pub fn form_taken(base: SavedServer, typed: &SavedServer, fields: &[FieldSpec]) 
             FormField::WifiOnly => p.wifi_only = typed.wifi_only,
             FormField::ClientCert => (p.client_cert, p.client_cert_password) = (typed.client_cert.clone(), typed.client_cert_password.clone()),
             FormField::Proxy => p.proxy = typed.proxy.clone(),
+            FormField::Folders => p.folders = typed.folders.clone(),
         }
     }
     p
@@ -523,6 +553,8 @@ pub enum ProfileWait {
 pub struct Kinds {
     #[cfg(feature = "plugins")]
     plugins: Option<Arc<nori_plugins::Plugins>>,
+    /// The device's music files; without them no local profile is offered or opens.
+    files: parking_lot::RwLock<Option<Arc<dyn local::Files>>>,
 }
 
 #[cfg(feature = "plugins")]
@@ -531,7 +563,7 @@ impl Kinds {
     /// nori's own kinds and those of `plugins`' enabled providers.
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn with_plugins(plugins: Arc<nori_plugins::Plugins>) -> Arc<Kinds> {
-        Arc::new(Kinds { plugins: Some(plugins) })
+        Arc::new(Kinds { plugins: Some(plugins), files: Default::default() })
     }
 }
 
@@ -550,6 +582,11 @@ impl nori_queue::scrobble::Scrobbles for PluginScrobbles {
 }
 
 impl Kinds {
+    /// The device's music files, which local profiles read: local profiles are offered from now on.
+    pub fn set_files(&self, files: Arc<dyn local::Files>) {
+        *self.files.write() = Some(files);
+    }
+
     /// The enabled plugins' lyrics services; none without plugins.
     pub(crate) fn lyrics_services(&self) -> Vec<Arc<dyn nori_lyrics::race::PluginLyrics>> {
         #[cfg(feature = "plugins")]
@@ -576,6 +613,7 @@ impl Kinds {
             ServerKind::Plugin { id } => Some(Arc::new(plugin::PluginProvider::new(id, self.plugins.clone()?)?)),
             #[cfg(not(feature = "plugins"))]
             ServerKind::Plugin { .. } => None,
+            ServerKind::Local => Some(Arc::new(local::Local::new(self.files.read().clone()?))),
         }
     }
 
@@ -598,7 +636,8 @@ impl Kinds {
         let plugins: Vec<ServerKind> = self.plugins.iter().flat_map(|p| p.running()).filter(|i| i.manifest.extends("provider")).map(|i| ServerKind::Plugin { id: i.manifest.id.clone() }).collect();
         #[cfg(not(feature = "plugins"))]
         let plugins = Vec::new();
-        std::iter::once(ServerKind::Subsonic).chain(plugins).collect()
+        let local = self.files.read().is_some().then_some(ServerKind::Local);
+        std::iter::once(ServerKind::Subsonic).chain(local).chain(plugins).collect()
     }
 }
 
@@ -618,6 +657,12 @@ impl Kinds {
         }
         #[cfg(not(feature = "plugins"))]
         let _ = transport;
+    }
+
+    /// The device's media library, which local profiles read (Android's): local profiles are offered from
+    /// now on.
+    pub fn set_device_music(&self, music: Arc<dyn local::DeviceMusic>) {
+        self.set_files(Arc::new(local::Listed(music)));
     }
 
     /// The kinds of profile that can be added, in the order they are offered.
@@ -869,6 +914,11 @@ impl Core {
 }
 
 impl Client {
+    /// The file on this device song `id` plays from; None for a song that streams.
+    pub fn file_of(&self, id: &str) -> Option<local::SongFile> {
+        self.core.provider().file(self, id)
+    }
+
     /// What opens the profile's stream addresses at the URLs they are served at; None when they are
     /// URLs already.
     pub fn stream_resolver(self: &Arc<Self>) -> Option<Arc<dyn ResolveStream>> {
@@ -884,6 +934,17 @@ impl Client {
             Some(url) => url,
             None => Ok(address),
         }
+    }
+
+    /// Fills the offline index from the profile's source; what it holds after.
+    pub async fn sync_library(&self) -> NetResult<crate::IngestStats> {
+        self.core.provider().sync(self).await
+    }
+
+    /// How far the library's sync running is ([`Client::sync_library`]); None when none runs, or it
+    /// cannot say.
+    pub fn sync_progress(&self) -> Option<local::SyncProgress> {
+        self.core.provider().sync_progress()
     }
 
     /// Signs the profile's account in with `answer` (a sign-in page's cookies, or what was pasted).
@@ -997,6 +1058,7 @@ mod tests {
             (WifiOnly, SavedServer { wifi_only: true, ..Default::default() }),
             (ClientCert, SavedServer { client_cert: "c.p12".into(), ..Default::default() }),
             (Proxy, SavedServer { proxy, ..Default::default() }),
+            (Folders, SavedServer { folders: vec!["/music".into()], ..Default::default() }),
         ];
         for (what, profile) in &cases {
             for (other, _) in &cases {

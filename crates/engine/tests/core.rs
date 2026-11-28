@@ -935,3 +935,45 @@ fn a_refused_segment_asks_for_the_playlist_anew() {
     assert_eq!(read_all(resolving.open("hls:song", 300).unwrap()), song_bytes(300, 600));
     assert!(cdn.asked.lock().iter().any(|(u, _, _)| u == "https://cdn/song/list.m3u8?2"), "a new playlist");
 }
+
+/// A local profile's song plays from its file on the virtual clock: the card hears the file's tone, and
+/// nothing is asked of the network.
+#[test]
+fn a_local_song_plays_from_its_file() {
+    use nori_engine::testing::{Stepper, Virtual};
+    let dir = nori_testdir::TempDir::new("engine-local");
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).unwrap();
+    std::fs::write(music.join("tone.flac"), nori_local::testing::flac(440.0, &["TITLE=Tone"], None)).unwrap();
+    let (core, client) = common::own_core(&dir, |_| {});
+    let kinds = nori_core::providers::Kinds::builtin();
+    kinds.set_files(Arc::new(nori_core::local::Disk::folders()));
+    core.use_kinds(kinds);
+    let profile = nori_core::settings::SavedServer { id: "test".into(), kind: nori_core::settings::ServerKind::Local, folders: vec![music.to_string_lossy().into()], ..Default::default() };
+    core.configure_profile(profile).unwrap();
+    nori_core::transport::block_on(client.sync_library()).unwrap();
+    let song = core.songs_page("title".into(), false, false, 0, 0, 0).unwrap().songs.remove(0);
+    let session = client.session().clone();
+    session.register(vec![song.clone()]);
+    session.set(vec![song.id.clone()], Some(0), false, None);
+    let net = Arc::new(Plain::default());
+    let analyses = Analyses::new({
+        let client = client.clone();
+        move || Some(client.clone())
+    });
+    let library = CoreLibrary { client: client.clone(), bytes: net.clone(), store: None, analyses: analyses.clone() };
+    let card = common::card::Card::new();
+    let clock = Virtual::default();
+    let engine = nori_engine::Engine::start_on(library, nori_engine::core::CoreApp::new(session.clone(), analyses), nori_engine::core::CoreQueue(session), Box::new(card.clone()), None, Default::default(), clock.clone(), |_| {});
+    let time = Stepper::new(clock, card.pull.clone());
+    engine.play_at(0, 0);
+    assert!(time.until(std::time::Duration::from_secs(20), || engine.status().state == nori_engine::State::Ended), "{:?}", engine.status());
+    engine.stop();
+    let f = card.format().expect("opened");
+    let heard = card.heard.lock();
+    let left: Vec<f32> = heard.chunks_exact(f.channels).map(|c| c[0]).collect();
+    let secs = left.len() as f64 / f.rate as f64;
+    let hz = left.windows(2).filter(|p| (p[0] < 0.0) != (p[1] < 0.0)).count() as f64 / 2.0 / secs;
+    assert!((0.9..1.2).contains(&secs) && (hz - 440.0).abs() < 10.0, "{secs} s at {hz} Hz");
+    assert!(net.0.lock().is_empty(), "nothing asked of the network: {:?}", net.0.lock());
+}

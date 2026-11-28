@@ -611,8 +611,13 @@ impl Handle {
         }
     }
 
-    /// Pings the server in the background, fills an empty offline index and flushes pending writes.
+    /// Pings the server in the background, fills an empty offline index and flushes pending writes; a
+    /// library read from files is read again, offline too.
     pub fn check(&self) {
+        let rescans = self.rules().rescans;
+        if rescans {
+            self.rescan();
+        }
         if self.offline {
             return;
         }
@@ -622,7 +627,7 @@ impl Handle {
             let ok = r.is_ok();
             (me.out)(Said::Reachable(r));
             // Search and the songs list read the offline index, where the profile keeps one.
-            if ok && me.rules().indexed && me.core.index_size().map_or(true, |s| s.songs == 0) {
+            if ok && !rescans && me.rules().indexed && me.core.index_size().map_or(true, |s| s.songs == 0) {
                 me.sync();
             }
             let _ = me.client.flush_pending().await;
@@ -668,14 +673,33 @@ impl Handle {
     /// Fills the offline index from the server, on a thread of its own: its pages are written between
     /// requests, which would hold up the session's other tasks.
     pub fn sync(&self) {
+        self.sync_saying(true);
+    }
+
+    /// Reads a library of files again ([`ProfileRules::rescans`]): only what changed is read, and it is
+    /// said only when it fills an empty library or fails. How far it is: [`Session::sync_progress`].
+    fn rescan(&self) {
+        self.sync_saying(self.core.index_size().map_or(true, |s| s.songs == 0));
+    }
+
+    /// [`Session::sync`], its start and end said or not.
+    fn sync_saying(&self, said: bool) {
         let (client, out) = (self.client.clone(), self.out.clone());
         crate::spawn("nori-sync", move || {
-            out(Said::Note(Note::Indexing));
-            out(Said::Note(match block_on(client.sync_library()) {
-                Ok(total) => Note::Indexed(total),
-                Err(e) => Note::IndexStopped(e),
-            }));
+            if said {
+                out(Said::Note(Note::Indexing));
+            }
+            match block_on(client.sync_library()) {
+                Ok(total) if said => out(Said::Note(Note::Indexed(total))),
+                Ok(_) => {}
+                Err(e) => out(Said::Note(Note::IndexStopped(e))),
+            }
         });
+    }
+
+    /// How far the library's sync is, when it can say: the files read of a library of files.
+    pub fn sync_progress(&self) -> Option<nori_core::providers::local::SyncProgress> {
+        self.client.sync_progress()
     }
 
     /// Restores the saved queue, paused at its position, shuffled, repeating and with the songs added by
@@ -877,6 +901,9 @@ impl Handle {
         self.player_shown(seen);
         if seen {
             self.sync_kept(nori_core::transfers::KeptCheck::Shown);
+            if self.rules().rescans {
+                self.rescan();
+            }
         }
         let Some(remote) = self.remote() else { return };
         remote.clone().sight(if seen { nori_core::remote::Sight::Screen } else { nori_core::remote::Sight::Nothing });

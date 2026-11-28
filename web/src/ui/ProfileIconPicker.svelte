@@ -26,7 +26,7 @@
         onclick={() => {
           if (!on) pick(icon);
           close();
-        }}><ProfileMark {icon} letter={profile.letter} side={46} /></button
+        }}><ProfileMark {icon} letter={profile.letter} kind={profile.kind} side={46} /></button
       >
     {/each}
   </div>

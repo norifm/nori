@@ -138,6 +138,16 @@ export async function read<T = Record<string, unknown>>(ask_: Record<string, unk
   return JSON.parse(await ask<string>("read", JSON.stringify(ask_)));
 }
 
+/** The files of a local profile's folder as last handed (`handFolder`), with the profile's id: every
+ * worker that takes over is handed them too, before it opens the profile. */
+let folderFiles: [string, unknown[]] | undefined;
+
+/** Hands the worker the files of the folder local profile `id` reads (crates/web files.rs). */
+export async function handFolder(id: string, files: unknown[]) {
+  folderFiles = [id, files];
+  await ask("local_files", id, files);
+}
+
 /** Replaces the worker with one over `b` while calls wait: the old one answers what it was asked and
  * goes, the new one opens the profile signed in last. */
 async function replace(b: Build, answered: boolean) {
@@ -149,6 +159,7 @@ async function replace(b: Build, answered: boolean) {
   worker.terminate();
   await start(b);
   player = b.kind === "player";
+  if (folderFiles) await send("local_files", folderFiles);
   await send("resume", []);
   if (sound && player) {
     const { port, rate, ear } = sound();

@@ -155,7 +155,7 @@ export type Equalizer = {
 export type ProfileIcon = "Letter" | "Provider" | "Sing" | "Surprise" | "Talking" | "LookUp" | "Satisfied" | "Think";
 /** A saved profile (the worker's `profiles`): `label` its name or its address's host, `letter` the one
  * `Letter` shows, `on` the one open. */
-export type Profile = { id: string; label: string; user: string; host: string; icon: ProfileIcon; letter: string; on: boolean };
+export type Profile = { id: string; kind: string; label: string; user: string; host: string; icon: ProfileIcon; letter: string; on: boolean };
 /** The saved profiles in their order, the icons a circle can show in the picker's order, and whether they may
  * be changed here (a jam guest's are its host's). */
 export type Profiles = { picks: boolean; icons: ProfileIcon[]; list: Profile[] };

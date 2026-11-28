@@ -69,6 +69,7 @@ internal fun refusal(r: Refusal): String = words(
         Refusal.UNKNOWN -> R.string.devices_unknown
         Refusal.TOO_MANY -> R.string.jam_too_many
         Refusal.OTHER_SOURCE -> R.string.devices_other_source
+        Refusal.DEVICE_FILES -> R.string.devices_device_files
     },
 )
 

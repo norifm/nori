@@ -58,6 +58,7 @@ class CodeWords(
 fun providerWords(r: Resources, kind: ServerKind, pluginName: String? = null, pluginAbout: String? = null): ProviderWords {
     val name = when (kind) {
         ServerKind.Subsonic -> r.getString(R.string.profile_kind_server)
+        ServerKind.Local -> r.getString(R.string.profile_kind_local)
         is ServerKind.Plugin -> pluginName ?: kind.id
     }
     val account = AccountWords(
@@ -75,6 +76,7 @@ fun providerWords(r: Resources, kind: ServerKind, pluginName: String? = null, pl
     )
     return when (kind) {
         ServerKind.Subsonic -> ProviderWords(name, r.getString(R.string.server_hint), r.getString(R.string.connect), r.getString(R.string.settings_server_api_key), account)
+        ServerKind.Local -> ProviderWords(name, "", r.getString(R.string.provider_add, name), r.getString(R.string.profile_kind_local_no_user), account)
         is ServerKind.Plugin -> ProviderWords(name, pluginAbout.orEmpty(), r.getString(R.string.provider_add, name), r.getString(R.string.profile_kind_plugin_no_user), account)
     }
 }
@@ -616,6 +618,7 @@ class Say(private val r: Resources) {
     val removeProfileText: String get() = r.getString(R.string.remove_profile_text)
     val providerGuest: String get() = r.getString(R.string.provider_guest)
     val providerSubsonicAbout: String get() = r.getString(R.string.provider_subsonic_about)
+    val providerLocalAbout: String get() = r.getString(R.string.provider_local_about)
     val pluginsEvery: String get() = r.getString(R.string.plugins_every)
     /** Why plugins are off at this start: [names] of those nori stopped in, or none for a start that didn't finish. */
     fun pluginsSafe(safe: dev.nori.music.ffi.plugins.SafeStart, names: List<String>): String = when (safe) {

@@ -385,7 +385,7 @@ pub fn welcome_sources(kinds: Vec<ServerKind>, offered: Vec<String>) -> Vec<Welc
     for kind in kinds {
         match &kind {
             ServerKind::Plugin { id } => plugins.push((id.clone(), WelcomeSource::Kind { kind })),
-            ServerKind::Subsonic => sources.push(WelcomeSource::Kind { kind }),
+            ServerKind::Subsonic | ServerKind::Local => sources.push(WelcomeSource::Kind { kind }),
         }
     }
     plugins.sort_by(|a, b| a.0.cmp(&b.0));

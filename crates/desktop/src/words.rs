@@ -29,6 +29,7 @@ pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords
             let name = plugin_name.unwrap_or_else(|| id.clone());
             ProviderWords { add: format!("Add {name}"), name, note: "From a plugin.", no_user: "No account" }
         }
+        ServerKind::Local => ProviderWords { name: "Local files".into(), note: "", add: "Add Local files".into(), no_user: "On this computer" },
     }
 }
 
@@ -237,6 +238,7 @@ pub fn profile_waits(name: &str, wait: nori_core::providers::ProfileWait) -> Str
     }
 }
 pub const PROVIDER_SUBSONIC_ABOUT: &str = "Navidrome and other servers";
+pub const PROVIDER_LOCAL_ABOUT: &str = "Music in folders on this computer";
 pub const CONTINUE_AS_GUEST: &str = "Continue as guest";
 /// The button that adds a provider and opens its sign-in.
 pub fn provider_sign_in(name: &str) -> String {
@@ -1058,6 +1060,7 @@ pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> 
         Some(Refusal::Unknown) => "That is no longer there.",
         Some(Refusal::TooMany) => "Too many songs waiting.",
         Some(Refusal::OtherSource) => "That device plays from another source.",
+        Some(Refusal::DeviceFiles) => "Its songs are files on one device and play only there.",
         None => "",
     };
     crate::DeviceRow {
@@ -1239,6 +1242,7 @@ pub fn form_option(what: nori_core::providers::FormField) -> [&'static str; 3] {
         WifiOnly => ["Wi-Fi only", "Never contact this server over mobile data.", ""],
         ClientCert => ["Client certificate", "", ""],
         Proxy => ["Proxy", "", ""],
+        Folders => ["Music folders", "", ""],
     }
 }
 

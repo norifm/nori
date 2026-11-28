@@ -379,6 +379,8 @@ enum Say {
         switch kind {
         case "subsonic":
             return ProviderWords(name: "OpenSubsonic", about: "Navidrome and other servers", note: "Navidrome, octo-fiesta or any Subsonic server", add: connect)
+        case "local":
+            return ProviderWords(name: "Local files", about: "Songs copied to nori", note: "Copy songs to nori in Finder or iTunes: they show up here.", add: "Add")
         default:
             // A plugin's kind, which the iPod never offers.
             return ProviderWords(name: "Plugin", about: "", note: "", add: connect)
@@ -760,6 +762,7 @@ enum Say {
         case 3: return "That is no longer there."
         case 4: return "Too many songs waiting."
         case 5: return "That device plays from another source."
+        case 6: return "Its songs are files on one device and play only there."
         default: return nil
         }
     }

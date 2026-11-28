@@ -2234,8 +2234,7 @@ fn provider_rows(app: &App) -> Vec<(String, Option<&'static str>, bool)> {
     app.provider_lines()
         .into_iter()
         .map(|p| match p {
-            ProviderLine::Kind(kind @ nori_core::settings::ServerKind::Subsonic) => (app.provider_words(&kind).name, Some(crate::text::PROVIDER_SUBSONIC_ABOUT), false),
-            ProviderLine::Kind(kind) => (app.provider_words(&kind).name, None, false),
+            ProviderLine::Kind(kind) => (app.provider_words(&kind).name, crate::text::provider_about(&kind), false),
             ProviderLine::Offered { name, .. } => (name, None, true),
         })
         .collect()
@@ -2269,7 +2268,7 @@ fn welcome(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let sources = if signing { flow.picked.clone() } else { app.welcome_sources() };
     let offered = app.provider_lines();
     let words = |source: &WelcomeSource| match source {
-        WelcomeSource::Kind { kind } => (app.provider_words(kind).name, (*kind == nori_core::settings::ServerKind::Subsonic).then_some(crate::text::PROVIDER_SUBSONIC_ABOUT)),
+        WelcomeSource::Kind { kind } => (app.provider_words(kind).name, crate::text::provider_about(kind)),
         WelcomeSource::Offered { plugin } => {
             let name = offered.iter().find_map(|l| match l {
                 crate::app::ProviderLine::Offered { id, name } if id == plugin => Some(name.clone()),
